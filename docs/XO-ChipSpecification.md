@@ -6,8 +6,9 @@ Octo Extensions
 ===============
 In the process of developing Octo, I have written and studied many Chip8 and SuperChip8 programs. I have also researched historical attempts to extend Chip8 such as [CHIP-8E](https://github.com/mattmikolay/viper/blob/master/volume2/issue8_9.pdf) as well as more modern and less conservative approaches like [Chip16](https://github.com/chip16/chip16). Chip8 has a simple, elegant instruction set which is easy to learn, but using it extensively reveals some shortcomings which limit the kinds of programs which can be written (to say nothing of convenience). In this document I will describe a series of extended instructions Octo provides called "XO-Chip" which, like SuperChip8, retain backwards compatibility with the original Chip8 instructions. The additions are sparing and try to retain some degree of historical plausibility and the flavor of Chip8's creative limitations. Authors of future Chip8 interpreters are encouraged to provide support for these instructions.
 
-The XO-Chip instructions are summarized as follows:
+The XO-Chip instructions (With unofficial additions) are summarized as follows:
 
+- `skip if vx > vy` (`0x5XY1`) (CHIP8E, NOT OFFICIALLY XO-CHIP) If VX > VY, change PC by 2
 - `save vx - vy` (`0x5XY2`) save an inclusive range of registers to memory starting at `i`.
 - `load vx - vy` (`0x5XY3`) load an inclusive range of registers from memory starting at `i`.
 - `i := long NNNN` (`0xF000, 0xNNNN`) load `i` with a 16-bit address.
