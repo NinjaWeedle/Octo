@@ -1,4 +1,4 @@
-Octo
+Octo (With 5XY1 from CHIP-8E)
 ====
 
 ![Title Image](https://raw.githubusercontent.com/JohnEarnest/Octo/gh-pages/images/f8z.gif)
