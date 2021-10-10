@@ -7,7 +7,6 @@
   <script src='lib/codemirror/codemirror.searchcursor.js'></script>
   <script src='lib/codemirror/vim.min.js'></script>
   <script src='lib/codemirror/octomode.js'></script>
-  <script src='lib/filesaver.js'></script>
   <script src='js/emulator.js'></script>
   <script src='js/compiler.js'></script>
   <script src='js/decompiler.js'></script>
@@ -25,6 +24,7 @@
   <div id='header'>
     <a href='https://github.com/JohnEarnest/Octo'><img src='images/logo.png'/></a>
     <input type="file" id="maininput" style="display:none">
+    <a id='mainlink' style='display:none'></a>
     <div class='head' id='main-run'>Run</div>
     <div class='head' id='main-open'>Open</div>
     <div class='head' id='main-save'>Share</div>
@@ -92,34 +92,33 @@
           <canvas id='audio-pattern-view' width='256' height='32'></canvas>
         </div>
         <div id='audio-pattern-editor'></div>
-        <div class='buttonbar'>
-          <div id='audio-play'  >Play</div>
-          <div id='audio-random'>Randomize</div>
-          <div id='audio-clear' >Clear</div>
-          <div id='audio-left'  >&lt;&lt;1</div>
-          <div id='audio-right' >&gt;&gt;1</div>
-          <div id='audio-not'>NOT</div>
-        </div>
-
-        <h1>Blend With Pattern</h1>
-        <div id='audio-blend-editor'></div>
-        <div class='buttonbar'>
-          <div id='audio-and'>AND</div>
-          <div id='audio-or'>OR</div>
-          <div id='audio-xor'>XOR</div>
-          <div id='audio-swap'>Swap With Pattern</div>
+        <div id='audio-tone-group'>
+          <div class='pair'>Pitch: <input id='audio-pitch' value='64'></div>
+          <div id='audio-left'   class='button'>&lt;&lt;</div>
+          <div id='audio-right'  class='button'>&gt;&gt;</div>
+          <div id='audio-random' class='button'>Randomize</div>
+          <div id='audio-play'   class='button'>Play</div>
         </div>
 
         <h1>Tone Generator</h1>
         <div class='preview-container'>
           <canvas id='audio-tone-view' width='256' height='32'></canvas>
         </div>
-        <div id='audio-tone-editor'></div>
+        <div>Blend Mode</div>
+        <div id='audio-blend-mode'>
+          <span data-value='none'>None</span>
+          <span data-value='or'  >OR  </span>
+          <span data-value='and' >AND </span>
+          <span data-value='xor' >XOR </span>
+        </div>
         <div id='audio-tone-group'>
+          <div class='pair'>Width: <input id='audio-width' value='16'></div>
+          <div class='pair'>Pulse: <input id='audio-pulse' value='0.5'></div>
           <div class='pair'>Frequency: <input id='audio-freq' value='440'> Hz</div>
-          <div class='pair'>Cutoff: <input id='audio-cutoff' value='128'></div>
-          <div id='audio-toblend' class='button'>To Blend</div>
-          <div id='audio-topat' class='button'>To Pattern</div>
+        </div>
+        <div id='audio-tone-group'>
+          <div id='audio-tone-preview' class='button'>Play</div>
+          <div id='audio-generate'     class='button'>Generate</div>
         </div>
       </div>
 
@@ -564,13 +563,11 @@ input:focus { outline: none; }
 
 #sprite-palette { margin-top: 10px; display: none; }
 #sprite-editor .CodeMirror { height: 115px; }
-#audio-pattern-editor .CodeMirror,
-#audio-blend-editor   .CodeMirror,
-#audio-tone-editor    .CodeMirror { height: 40px; }
+#audio-pattern-editor .CodeMirror { height: 40px; }
 #audio-tone-group { display: flex; flex-direction: row; margin-top: 10px; align-items: center; }
 #audio-tone-group .pair { margin-right: 15px; }
 #audio-tone-group .button { margin-left: 10px; }
-#audio-tone-group input { width:40px; height:30px; margin-left:5px; }
+#audio-tone-group input { width:60px; height:30px; margin-left:5px; }
 #binary-editor        .CodeMirror { height: 100px; }
 #binary-filename { width: 100%; }
 
@@ -901,7 +898,10 @@ window.onkeyup = event => {
     emulator.v[emulator.waitReg] = kindex
   }
   if (event.key == '`') { stopRom() }
-  if (event.key == 'i') { emulator.breakpoint ? clearBreakpoint() : haltBreakpoint('user interrupt') }
+  if (event.key == 'i') {
+    emulator.breakpoint ? clearBreakpoint() : haltBreakpoint('user interrupt');
+    var k = document.getElementById("run-overlay").style.zIndex = "1001";
+  }
   if (event.key == 'p') { haltProfiler('profiler') }
   if (event.key == 'm') { monitoring = !monitoring; setVisible(document.getElementById('monitor'),monitoring) }
   if (emulator.breakpoint) {
@@ -980,35 +980,46 @@ function runRom(rom) {
   emulator.exitVector = stopRom
   emulator.importFlags = _ => getPref('octoFlagRegisters')
   emulator.exportFlags = f => setPref('octoFlagRegisters',f)
-  emulator.buzzTrigger = (ticks, remainingTicks) => playPattern(ticks, emulator.pattern, remainingTicks)
   emulator.init(rom)
+  audioSetup(emulator)
   clearBreakpoint()
-  audioSetup()
   setVisible(runCover, true, 'flex')
   updateMonitor()
   resetLinter()
   runCover.style.backgroundColor = emulator.quietColor
   setRenderTarget(5, 'target')
-  intervalHandle = setInterval(_ => {
-    for(var z = 0; (z < emulator.tickrate) && (!emulator.waiting); z++) {
-      if (!emulator.breakpoint) {
-        if (emulator.vBlankQuirks && ((emulator.m[emulator.pc] & 0xF0) == 0xD0)) { z = emulator.tickrate }
-        if (emulator.linted) lint()
-        emulator.tick()
-        if (emulator.pc in emulator.metadata.breakpoints) { haltBreakpoint(emulator.metadata.breakpoints[emulator.pc]) }
-        if (emulator.r.length == emulator.stack_breakpoint) { emulator.stack_breakpoint = -1; haltBreakpoint('step out') }
+
+  var frameTime = 1000/60;
+  var last = Date.now(), diff, origin = last+frameTime/2;
+  var stepFrame = _ => {
+    diff = (Date.now() - last); last += diff;
+    for(var k = 0; origin < last - frameTime && k < 2; origin += frameTime, k++){
+      for(var z = 0; (z < emulator.tickrate) && (!emulator.waiting); z++) {
+        if (!emulator.breakpoint) {
+          if (emulator.vBlankQuirks && ((emulator.m[emulator.pc] & 0xF0) == 0xD0)) { z = emulator.tickrate }
+          if (emulator.linted) lint()
+          emulator.tick()
+          if (emulator.pc in emulator.metadata.breakpoints) { haltBreakpoint(emulator.metadata.breakpoints[emulator.pc]) }
+          if (emulator.r.length == emulator.stack_breakpoint) { emulator.stack_breakpoint = -1; haltBreakpoint('step out') }
+        }
       }
+      if (!emulator.breakpoint) {
+        emulator.dt -= emulator.dt > 0
+        emulator.st -= emulator.st > 0
+      }else{
+        if(emulator.st>0){
+          emulator.buzzTimer(emulator.st=0);
+        }
+      }
+      recordFrame()
+      XOAudio.refresh(frameTime/1000);
     }
-    if (!emulator.breakpoint) {
-      emulator.dt -= emulator.dt > 0
-      emulator.st -= emulator.st > 0
-    }
-    recordFrame()
     renderDisplay(emulator)
     if (monitoring && !emulator.halted && !emulator.breakpoint) updateMonitor()
     if (emulator.halted) return
     runCover.style.backgroundColor = (emulator.st > 0) ? emulator.buzzColor : emulator.quietColor
-  }, 1000/60)
+  }
+  intervalHandle = setInterval(stepFrame,frameTime);
 }
 
 function stopRom() {

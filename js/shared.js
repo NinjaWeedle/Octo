@@ -155,6 +155,7 @@ var audio;
 var audioNode;
 var audioSource;
 var audioData;
+var XOAudio;
 
 var AudioBuffer = function(buffer, duration) {
 	if (!(this instanceof AudioBuffer)) {
@@ -187,17 +188,14 @@ AudioBuffer.prototype.dequeue = function(duration) {
 }
 
 var FREQ = 4000;
-var TIMER_FREQ = 60;
-var SAMPLES = 16;
-var BUFFER_SIZE = SAMPLES * 8
-
+var PITCH_BIAS = 64;
 
 function audioEnable() {
 	// this will only work if called directly from a user-generated input handler:
 	if (audio && audio.state == 'suspended') audio.resume()
 }
 
-function audioSetup() {
+function audioSetup(emulator) {
 	if (!audio) {
 		if (typeof AudioContext !== 'undefined') {
 			audio = new AudioContext();
@@ -208,12 +206,16 @@ function audioSetup() {
 	}
 	audioEnable()
 	if (audio && !audioNode) {
-		audioNode = audio.createScriptProcessor(4096, 1, 1);
+		const bufferSize = // set bufferSize according to environment's samplerate
+		audio.sampleRate <  64000 ? 2048 : // for 48000hz or 44100hz or less
+		audio.sampleRate < 128000 ? 4096 : 8192; // for 96000hz or more
+		audioNode = audio.createScriptProcessor(bufferSize, 1, 1);
+		audioNode.gain = audio.createGain();
+		audioNode.gain.gain.value = VOLUME ;
 		audioNode.onaudioprocess = function(audioProcessingEvent) {
 			var outputBuffer = audioProcessingEvent.outputBuffer;
 			var outputData = outputBuffer.getChannelData(0);
 			var samples_n = outputBuffer.length;
-
 			var index = 0;
 			while(audioData.length && index < samples_n) {
 				var size = samples_n - index;
@@ -238,11 +240,15 @@ function audioSetup() {
 			}
 		}
 		audioData = [];
-		audioNode.connect(audio.destination);
-		return true;
+		audioNode.connect(audioNode.gain);
+		audioNode.gain.connect(audio.destination);
+
+		XOAudio = new AudioControl();
+		emulator.buzzTimer  = _ => XOAudio.setTimer(_);
+		emulator.buzzBuffer = _ => XOAudio.setBuffer(_);
+		emulator.buzzPitch  = _ => XOAudio.setPitch(_);
 	}
-	if (audio && audioNode) { return true; }
-	return false;
+	return audio && audioNode
 }
 
 function stopAudio() {
@@ -256,27 +262,89 @@ function stopAudio() {
 
 var VOLUME = 0.25;
 
-function playPattern(soundLength, buffer, remainingTicks) {
+function playPattern(soundLength,buffer,pitch=PITCH_BIAS,
+	sampleState={ pos: 0 }) {
 	if (!audio) { return; }
 	audioEnable()
 
-	var samples = Math.floor(BUFFER_SIZE * audio.sampleRate / FREQ);
-	var audioBuffer = new Array(samples);
-	if (remainingTicks && audioData.length > 0) {
-		audioData[audioData.length - 1].dequeue(Math.floor(remainingTicks * audio.sampleRate / TIMER_FREQ));
+	var freq = FREQ*2**((pitch-PITCH_BIAS)/48);
+	var samples = Math.ceil(audio.sampleRate * soundLength);
+	
+	var bufflen = buffer.length * 8;
+	var audioBuffer = new Float32Array(samples);
+
+	var step = freq / audio.sampleRate;
+	var pos = sampleState.pos;
+
+	// keep super-sampling consistent with audio sample rate
+	var quality = Math.ceil( 384000 / audio.sampleRate );
+	var lowPassAlpha = getLowPassAlpha(audio.sampleRate * quality);
+	
+	for(var i = 0, il = samples; i < il; i++) {
+		for (var j = 0; j < quality; ++j) {
+			var cell = pos >> 3, shift = pos & 7 ^ 7;
+			var value = getLowPassFilteredValue(lowPassAlpha, buffer[cell] >> shift & 1);
+			pos = ( pos + step/quality ) % bufflen;
+		}
+		audioBuffer[i] = value;
 	}
 
-	for(var i = 0; i < samples; ++i) {
-		var srcIndex = Math.floor(i * FREQ / audio.sampleRate);
-		var cell = srcIndex >> 3;
-		var bit = srcIndex & 7;
-		audioBuffer[i] = (buffer[srcIndex >> 3] & (0x80 >> bit)) ? VOLUME: 0;
+	audioData.push(new AudioBuffer(audioBuffer, samples));
+	
+	return { pos };
+}
+
+const silentPattern = new Array(64).fill(0);
+
+function AudioControl(){
+	this.state = { pos: 0 };
+	this.reset = true;
+	this.buffer = [];
+
+	this.timer = 0;
+	this.pitch = PITCH_BIAS;
+
+	this.refresh = _ => {
+		if (this.reset) this.state.pos = 0; this.reset = false;
+		if (this.timer == 0) playPattern(_,silentPattern);
+		else this.state = playPattern(_,this.buffer,this.pitch,this.state);
+		if((this.timer -= this.timer>0) == 0) this.reset = true;
+		while(audioData.length > 8) audioData.shift();
 	}
-	audioData.push(new AudioBuffer(audioBuffer, Math.floor(soundLength * audio.sampleRate / TIMER_FREQ)));
+	this.setTimer = (timer) => {
+		if(timer == 0) this.reset = true;
+		this.timer = timer;
+	}
+	this.setBuffer = buffer => this.buffer = buffer;
+	this.setPitch = pitch => this.pitch = pitch;
 }
 
 function escapeHtml(str) {
     var div = document.createElement('div');
     div.appendChild(document.createTextNode(str));
     return div.innerHTML;
+}
+
+// Should be a good way below the Nyquist limit of 22.05 kHz.
+const cutoffFrequency = 18000;
+
+// How many filters to put in sequence.
+const lowPassFilterSteps = 4;
+
+// Each filter is an exponential filter, which mimics a simple analog RC filter.
+// We need multiple of them in series to get decent attenuation near the stop band.
+
+const lowPassBuffer = new Array(lowPassFilterSteps + 1).fill(0);
+
+function getLowPassAlpha(samplingFrequency) {
+	const c = Math.cos(2 * Math.PI * cutoffFrequency / samplingFrequency);
+	return c - 1 + Math.sqrt(c * c - 4 * c + 3);
+}
+
+function getLowPassFilteredValue(alpha, targetValue) {
+	lowPassBuffer[0] = targetValue;
+	for (let i = 1; i < lowPassBuffer.length; ++i) {
+		lowPassBuffer[i] += (lowPassBuffer[i - 1] - lowPassBuffer[i]) * alpha;
+	}
+	return lowPassBuffer[lowPassBuffer.length - 1];
 }

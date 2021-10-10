@@ -245,8 +245,8 @@ SuperChip or SCHIP is a set of extended Chip-8 instructions. Octo can emulate th
 - `scroll-right` Scroll the contents of the display right by 4 pixels.
 - `i := bighex vx` Set I to a large 8x10 hex char corresponding to register value.
 - `exit` Halt the program and quit the emulator.
-- `saveflags vx` Save v0-vn (n < 8) to flag registers. (Originally, HP-48 flag registers.)
-- `loadflags vx` Restore v0-vn (n < 8) from flag registers.
+- `saveflags vx` Save v0-vn to flag registers. (Originally, HP-48 flag registers.)
+- `loadflags vx` Restore v0-vn from flag registers.
 
 Flag registers are persisted using browser local storage, so provided no applications blow them away intentionally they can be used to store information between play sessions such as high score information or progress.
 
@@ -261,9 +261,10 @@ Beyond SuperChip, Octo provides a set of unique extended instructions called XO-
 - `i := long NNNN` load `i` with a 16-bit address. (this instruction is 4 bytes long.)
 - `plane n` select zero or more drawing planes by bitmask (0 <= n <= 3).
 - `audio` store 16 bytes starting at `i` in the audio pattern buffer.
+- `pitch := vx` set the audio pattern playback rate to `4000*2^((vx-64)/48)`Hz. Initialized at 4000Hz.
 - `scroll-up n` scroll the contents of the display up by 0-15 pixels.
 
-For more details, consult the XO-Chip specification in Octo's documentation directory. At time of writing Octo is the only Chip-8 interpreter which supports these instructions, but authors are encouraged to provide them in their own interpreters.
+For more details, consult the [XO-Chip specification](XO-ChipSpecification.html) in Octo's documentation directory. Octo is the main Chip-8 interpreter which supports these instructions, but a small but growing collection of third-party interpreters support them as well. Why not add them to yours?
 
 Debugging
 ---------

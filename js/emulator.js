@@ -235,9 +235,10 @@ function Emulator() {
 	this.i  = 0;        // index register
 	this.dt = 0;        // delay timer
 	this.st = 0;        // sound timer
+	this.pitch   = 64;  // audio pitch register
+	this.pattern = [];  // audio pattern buffer
 	this.hires = false; // are we in SuperChip high res mode?
 	this.flags = [];    // semi-persistent hp48 flag vars
-	this.pattern = [];  // audio pattern buffer
 	this.plane = 1;     // graphics plane
 	this.profile_data = {};
 
@@ -252,10 +253,12 @@ function Emulator() {
 	this.linted = false;
 
 	// external interface stubs
-	this.exitVector  = function() {}                                   // fired by 'exit'
-	this.importFlags = function() { return [0, 0, 0, 0, 0, 0, 0, 0]; } // load persistent flags
-	this.exportFlags = function(flags) {}                              // save persistent flags
-	this.buzzTrigger = function(ticks, remainingTicks) {}                              // fired when buzzer played
+	this.exitVector  = function() {}                                                           // fired by 'exit'
+	this.importFlags = function() { return [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; } // load persistent flags
+	this.exportFlags = function(flags) {}                                                      // save persistent flags
+	this.buzzTimer   = function(timer) {}
+	this.buzzBuffer  = function(buffer) {}
+	this.buzzPitch   = function(pitch) {}
 
 	this.init = function(rom) {
 		// initialise memory with a new array to ensure that it is of the right size and is initiliased to 0
@@ -282,6 +285,7 @@ function Emulator() {
 		this.i  = 0;
 		this.dt = 0;
 		this.st = 0;
+		this.pitch = 64;
 		this.hires = false;
 		this.plane = 1;
 
@@ -335,25 +339,21 @@ function Emulator() {
 				this.writeCarry(x, t, ((this.v[y] >> 7) & 0x1));
 				break;
 			default:
-				haltBreakpoint("unknown math opcode "+op.toString(16).toUppercase());
+				haltBreakpoint("unknown math opcode "+op.toString(16).toUpperCase());
 		}
 	}
 
 	this.misc = function(x, rest) {
 		// miscellaneous opcodes
 		switch(rest) {
-			case 0x01:
-				this.plane = (x & 0x3);
-				break;
+			case 0x01: this.plane = (x & 0x3); break;
 			case 0x02:
-				for(var z = 0; z < 16; z++) {
-					this.pattern[z] = this.m[this.i+z];
-				}
-				break;
+				for(var z = 0; z < 16; z++) this.pattern[z] = this.m[this.i+z];
+				this.buzzBuffer(this.pattern); break;
 			case 0x07: this.v[x] = this.dt; break;
 			case 0x0A: this.waiting = true; this.waitReg = x; break;
 			case 0x15: this.dt = this.v[x]; break;
-			case 0x18: this.buzzTrigger(this.v[x], this.st); this.st = this.v[x]; break;
+			case 0x18: this.buzzTimer(this.st = this.v[x]); break;
 			case 0x1E: this.i = (this.i + this.v[x])&0xFFFF; break;
 			case 0x29: this.i = ((this.v[x] & 0xF) * 5); break;
 			case 0x30: this.i = ((this.v[x] & 0xF) * 10 + fontsets[this.fontStyle].small.length); break;
@@ -362,6 +362,7 @@ function Emulator() {
 				this.m[this.i+1] = Math.floor(this.v[x]/10)%10;
 				this.m[this.i+2] = this.v[x]%10;
 				break;
+			case 0x3A: this.buzzPitch(this.pitch = this.v[x]); break;
 			case 0x55:
 				for(var z = 0; z <= x; z++) { this.m[this.i+z] = this.v[z]; }
 				if (!this.loadStoreQuirks) { this.i = (this.i+x+1)&0xFFFF; }
@@ -377,12 +378,12 @@ function Emulator() {
 			case 0x85:
 				this.flags = this.importFlags();
 				if (typeof this.flags == "undefined" || this.flags == null) {
-					this.flags = [0, 0, 0, 0, 0, 0, 0, 0];
+					this.flags = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 				}
-				for(var z = 0; z <= x; z++) { this.v[z] = this.flags[z]; }
+				for(var z = 0; z <= x; z++) { this.v[z] = 0xFF & this.flags[z]; }
 				break;
 			default:
-				haltBreakpoint("unknown misc opcode "+rest.toString(16).toUppercase());
+				haltBreakpoint("unknown misc opcode "+rest.toString(16).toUpperCase());
 		}
 	}
 
@@ -586,11 +587,11 @@ function Emulator() {
 				return;
 			}
 			else {
-				haltBreakpoint("unknown opcode "+op.toString(16).toUppercase());
+				haltBreakpoint("unknown opcode "+op.toString(16).toUpperCase());
 			}
 		}
 		if (o == 0x9 && n != 0) {
-			haltBreakpoint("unknown opcode "+op.toString(16).toUppercase());
+			haltBreakpoint("unknown opcode "+op.toString(16).toUpperCase());
 		}
 
 		// dispatch complex opcodes
@@ -610,7 +611,7 @@ function Emulator() {
 			case 0xC: this.v[x] = (Math.random()*256)&nn;           break;
 			case 0xD: this.sprite(this.v[x], this.v[y], n);         break;
 			case 0xF: this.misc(x, nn);                             break;
-			default: haltBreakpoint("unknown opcode "+o.toString(16).toUppercase());
+			default: haltBreakpoint("unknown opcode "+o.toString(16).toUpperCase());
 		}
 	}
 

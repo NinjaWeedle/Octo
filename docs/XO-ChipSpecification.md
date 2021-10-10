@@ -11,9 +11,12 @@ The XO-Chip instructions (With unofficial additions) are summarized as follows:
 - `skip if vx > vy` (`0x5XY1`) (CHIP8E, NOT OFFICIALLY XO-CHIP) If VX > VY, change PC by 2
 - `save vx - vy` (`0x5XY2`) save an inclusive range of registers to memory starting at `i`.
 - `load vx - vy` (`0x5XY3`) load an inclusive range of registers from memory starting at `i`.
+- `saveflags vx` (`0xFN75`) save v0-vn to flag registers. (generalizing SCHIP).
+- `loadflags vx` (`0xFN85`) restore v0-vn from flag registers. (generalizing SCHIP).
 - `i := long NNNN` (`0xF000, 0xNNNN`) load `i` with a 16-bit address.
 - `plane n` (`0xFN01`) select zero or more drawing planes by bitmask (0 <= n <= 3).
 - `audio` (`0xF002`) store 16 bytes starting at `i` in the audio pattern buffer.
+- `pitch := vx` (`0xFX3A`) set the audio pattern playback rate to `4000*2^((vx-64)/48)`Hz.
 - `scroll-up n` (`0x00DN`) scroll the contents of the display up by 0-15 pixels.
 
 Memory Access
@@ -44,6 +47,13 @@ Reads or writes proceed in the order the register arguments are provided. Thus, 
 
 These instructions also provide another useful function. Unlike normal `load` and `save`, they do not postincrement `i`. The `i` postincrement is useful in some situations but inconvenient in others. When a postincrement is desired the standard `load` and `save` instructions may be used, and when it is not desired a programmer may substitute the ranged version specifying `v0` as the minimum range.
 
+SCHIP provides a pair of instructions for reading and writing "flag registers", which were originally OS-level variables on the HP-48 calculator. Some modern CHIP-8 implementations will persist the data stored in these register between runs. The HP-48 only offered 8 bytes worth of flag registers. As a natural generalization of this functionality, using the same nybble-wise instruction encoding, XO-Chip allows for 16 bytes instead:
+
+    loadflags v3  # valid in SCHIP
+    loadflags vF  # only valid in XO-Chip
+
+This generalization both expands persistent storage slightly and gives programmers a fast and convenient way to back up or restore the full v-register file without manipulating the `i` register or consuming any extra ROM space.
+
 Extended Memory
 ---------------
 The design of Chip8 instructions with immediate addresses such as `jump` limit Chip8 to a 4k address space, of which the low 512b is reserved for historical reasons. It would be difficult to expand this range, and 3.5kb of code space does seem to be sufficient for many applications. However, level-based games or anything graphically intensive (including games with color graphics as described below) would benefit tremendously from expanded space for data. The COSMAC-VIP had a 16-bit address space of which `i` can only conventionally access 12 bits. We propose an addition which allows the programmer to load a 16-bit immediate value into `i` via a double-width instruction. The sequence:
@@ -52,7 +62,14 @@ The design of Chip8 instructions with immediate addresses such as `jump` limit C
 
 Compiles into a header instruction `0xF000` followed by a pair of bytes `0xNNNN` which specify the value to store in `i`. The semantics of `i` remain identical to their normal behavior.
 
-The conditional skip instructions `0xEN9E` (`if -key then`), `0xENA1` (`if key then`), `0x3XNN` (`if vx == NN then`), `0x4XNN` (`if vx != NN then`), `0x5XY0` (`if vx == vy then`) and `0x9XY0` (`if vx != NN`) will skip over this double-wide instruction, rather than skipping halfway through it.
+The conditional skip instructions `0xEN9E` (`if -key then`), `0xENA1` (`if key then`), `0x3XNN` (`if vx == NN then`), `0x4XNN` (`if vx != NN then`), `0x5XY0` (`if vx == vy then`) and `0x9XY0` (`if vx != vy`) will skip over this double-wide instruction, rather than skipping halfway through it.
+
+This change in the behavior of conditional skip instructions should not harm any existing well-formed Chip8 or SCHIP programs, but also provides a way for programs to cleanly detect whether they are running in an interpreter which supports XO-Chip instructions:
+
+	if vf != vf then 0xF0 0x00 jump NO_SUPPORT
+	jump XO_SUPPORT
+
+Here we have created what appears to be a never-taken "dead" branch. On a Chip8 or SCHIP interpreter, the (to them, invalid) instruction 0xF000 will be skipped, and the jump to NO_SUPPORT will be executed. On an XO-Chip interpreter, the entire double-wide instruction will be skipped, and execution will proceed to XO_SUPPORT.
 
 Bitplanes
 ---------
@@ -70,7 +87,7 @@ Audio
 -----
 Chip8 has the ability to make a single sound using a "buzzer". Implementations are free to make any sound when the buzzer timer is nonzero. It would be nice to provide Chip8 programs with a simple but flexible means of making a range of different sounds. The approach chosen must make it possible to store and play back sounds without using excessive amounts of ram or CPU cycles.
 
-XO-Chip provides Chip8 with a 16-byte "pattern buffer" which, when the buzzer is played, is treated as a series of 1-bit samples at 4000 samples per second which control noise made by the buzzer. By loading different patterns into the this buffer it is possible to create various square wave tones with different duty cycles as well as percussive noise. Rapidly replacing the contents of the pattern buffer should even permit crude sampled audio playback or music. The 16-byte pattern buffer can fit entirely within `v` registers for purposes of this kind of realtime waveform generation.
+XO-Chip provides Chip8 with a 16-byte "pattern buffer" which, when the buzzer is played, is treated as a series of 1-bit samples which control noise made by the buzzer. By loading different patterns into the this buffer it is possible to create various square wave tones with different duty cycles as well as percussive noise. Rapidly replacing the contents of the pattern buffer should even permit crude sampled audio playback or music. The 16-byte pattern buffer can fit entirely within `v` registers for purposes of this kind of realtime waveform generation.
 
 	: click
 		0x02 0xCD 0x00 0x00 0x00 0x00 0x00 0x00
@@ -83,10 +100,29 @@ XO-Chip provides Chip8 with a 16-byte "pattern buffer" which, when the buzzer is
 	v0 := 2 # play for 2/60ths of a second, as expected
 	buzzer := v0
 
-Note that the `audio` instruction makes a copy of the values in Chip8 memory- altering memory will not change the contents of the audio buffer unless a subsequent `audio` instruction is fired. The initial contents of the pattern buffer is implementation-defined, so programmers wishing to use sound effects should always initialize the pattern buffer explicitly. Octo will initialize the pattern buffer to zeroes, so without initialization no sound will occur when the buzzer goes off. 
+Note that the `audio` instruction makes a copy of the values in Chip8 memory- altering memory will not change the contents of the pattern buffer unless a subsequent `audio` instruction is fired. The initial contents of the pattern buffer is implementation-defined, so programmers wishing to use sound effects should always initialize the pattern buffer explicitly. Octo will initialize the pattern buffer to zeroes, so without initialization no sound will occur when the buzzer goes off.
 
 The overloading of `i` as a means of specifying the address of the new pattern buffer is a bit inconvenient, but existing instruction encodings don't permit any other way to specify a 12-bit immediate value. The `audio` instruction is placed in unpopulated space in the `0xF`-prefix instructions.
+
+The playback rate of the pattern buffer is controlled by an auxiliary register named `pitch`, which is initialized to 4000Hz. There is a dedicated instruction for copying a v-register to the `pitch` register, `pitch := vX`. The playback rate in hertz is given by the expression `4000*2^((vx-64)/48)`. A _musical_ pitch observed will depend on the contents pattern buffer.
+
+For example, a `pitch` of 247 would correspond to a playback rate of 56200.06Hz. Given the following pattern (the lowest-frequency waveform expressible):
+```
+0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF
+```
+We divide this playback rate by 128 (the wavelength of our pattern in samples) to get an apparent tone of 439.06Hz, close to the 440hz of A4. Alternatively, we could use a different pattern with a wavelength of 32 samples:
+```
+0x00 0x00 0xFF 0xFF 0x00 0x00 0xFF 0xFF 0x00 0x00 0xFF 0xFF 0x00 0x00 0xFF 0xFF
+```
+Giving a tone of 1756.25Hz, close to the 1760hz of A6. Thus, by altering the pattern, we have shifted the note played by two octaves. Altering the pattern and pitch separately or in concert can produce a wide range of effects.
+
+The playback offset of the pattern buffer should only be reset when the buzzer timer reaches or is directly set to 0; not as a result of simply executing `buzzer := vx`. If the buzzer timer is kept above zero on every frame, the generated waveform should thus form a continuous loop of the pattern.
 
 Scrolling
 ---------
 SuperChip8 provided a set of screen scrolling instructions. These are very handy for some kinds of games, but having scrolling in only 3 directions seriously limits their utility. XO-Chip provides a `scroll-up` which is a functional complement to SuperChip8 `scroll-down`, capable of scrolling 0 to 15 pixels at a time. The encoding of `scroll-up` is chosen to fit the existing pattern of `scroll-down`.
+
+Changelog
+---------
+- 1.0 : initial release.
+- 1.1 : added the `pitch := vx` instruction, generalized `loadflags`/`saveflags` to a full nybble range.

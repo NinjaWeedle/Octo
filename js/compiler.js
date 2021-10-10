@@ -361,7 +361,7 @@ Compiler.prototype.reservedNames = {
 	"scroll-down":true, "scroll-right":true, "scroll-left":true,
 	"lores":true, "hires":true, "loadflags":true, "saveflags":true, "i":true,
 	"audio":true, "plane":true, "scroll-up":true, ":macro":true, ":calc":true, ":byte":true,
-	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true,
+	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true, "pitch":true,
 };
 
 Compiler.prototype.checkName = function(name, kind) {
@@ -863,6 +863,7 @@ Compiler.prototype.instruction = function(token) {
 	}
 	else if (token == "delay")   { this.expect(":="); this.inst(0xF0 | this.register(), 0x15); }
 	else if (token == "buzzer")  { this.expect(":="); this.inst(0xF0 | this.register(), 0x18); }
+	else if (token == "pitch")   { this.expect(":="); this.inst(0xF0 | this.register(), 0x3A); }
 	else if (token == "if") {
 		var control = this.controlToken();
 		if (control[0] == "then") {
@@ -943,16 +944,14 @@ Compiler.prototype.instruction = function(token) {
 	else if (token == "exit")         { this.schip = true; this.inst(0x00, 0xFD); }
 	else if (token == "lores")        { this.schip = true; this.inst(0x00, 0xFE); }
 	else if (token == "hires")        { this.schip = true; this.inst(0x00, 0xFF); }
-	else if (token == "saveflags") {
+	else if (token == "saveflags")    {
 		var flags = this.register();
-		if (flags > 7) { throw "Argument to saveflags must be v[0,7]."; }
-		this.schip = true;
+		this.schip = true; this.xo = flags > 7;
 		this.inst(0xF0 | flags, 0x75);
 	}
 	else if (token == "loadflags") {
 		var flags = this.register();
-		if (flags > 7) { throw "Argument to loadflags must be v[0,7]."; }
-		this.schip = true;
+		this.schip = true; this.xo = flags > 7;
 		this.inst(0xF0 | flags, 0x85);
 	}
 	else if (token == "i") {
