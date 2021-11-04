@@ -388,6 +388,7 @@ function Emulator() {
 	}
 
 	this.sprite = function sprite(x, y, len) {
+		var ORmode = ( this.v[0xF] == 255 ) + 0;
 		this.v[0xF] = 0x0;
 		var rowSize = this.hires ? 128 : 64;
 		var colSize = this.hires ?  64 : 32;
@@ -404,7 +405,7 @@ function Emulator() {
 							if ((x%rowSize)+b>=rowSize || (y%colSize)+a>=colSize) { source = 0; }
 						}
 						if (!source) { continue; }
-						if (this.p[layer][target]) { this.p[layer][target] = 0; this.v[0xF] = 0x1; }
+						if (this.p[layer][target]) { this.p[layer][target] = ORmode; this.v[0xF] = 0x1; }
 						else { this.p[layer][target] = 1; }
 					}
 				}
@@ -420,7 +421,7 @@ function Emulator() {
 							if ((x%rowSize)+b>=rowSize || (y%colSize)+a>=colSize) { source = 0; }
 						}
 						if (!source) { continue; }
-						if (this.p[layer][target]) { this.p[layer][target] = 0; this.v[0xF] = 0x1; }
+						if (this.p[layer][target]) { this.p[layer][target] = ORmode; this.v[0xF] = 0x1; }
 						else { this.p[layer][target] = 1; }
 					}
 				}
