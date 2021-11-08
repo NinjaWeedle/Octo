@@ -235,8 +235,6 @@ function Emulator() {
 	this.i  = 0;        // index register
 	this.dt = 0;        // delay timer
 	this.st = 0;        // sound timer
-	this.pitch   = 64;  // audio pitch register
-	this.pattern = [];  // audio pattern buffer
 	this.hires = false; // are we in SuperChip high res mode?
 	this.flags = [];    // semi-persistent hp48 flag vars
 	this.plane = 1;     // graphics plane
@@ -259,6 +257,9 @@ function Emulator() {
 	this.buzzTimer   = function(timer) {}
 	this.buzzBuffer  = function(buffer) {}
 	this.buzzPitch   = function(pitch) {}
+	this.buzzVolume  = function(volume) {}
+	this.buzzSelect  = function(select) {}
+	this.buzzChannel = function(channel) {}
 
 	this.init = function(rom) {
 		// initialise memory with a new array to ensure that it is of the right size and is initiliased to 0
@@ -277,7 +278,6 @@ function Emulator() {
 		for(var z = 0; z < font.big.length;  z++) { this.m[z + font.small.length] = font.big[z]; }
 		for(var z = 0; z < rom.rom.length;   z++) { this.m[0x200+z] = rom.rom[z]; }
 		for(var z = 0; z < 16;               z++) { this.v[z] = 0; }
-		for(var z = 0; z < 16;               z++) { this.pattern[z] = 0; }
 
 		// initialize interpreter state
 		this.r = [];
@@ -285,7 +285,6 @@ function Emulator() {
 		this.i  = 0;
 		this.dt = 0;
 		this.st = 0;
-		this.pitch = 64;
 		this.hires = false;
 		this.plane = 1;
 
@@ -348,8 +347,10 @@ function Emulator() {
 		switch(rest) {
 			case 0x01: this.plane = (x & 0x3); break;
 			case 0x02:
-				for(var z = 0; z < 16; z++) this.pattern[z] = this.m[this.i+z];
-				this.buzzBuffer(this.pattern); break;
+				var pattern = new Uint8Array(16);
+				for(var z = 0; z < 16; z++)
+					pattern[z] = this.m[this.i+z];
+				this.buzzBuffer(pattern); break;
 			case 0x07: this.v[x] = this.dt; break;
 			case 0x0A: this.waiting = true; this.waitReg = x; break;
 			case 0x15: this.dt = this.v[x]; break;
@@ -362,7 +363,10 @@ function Emulator() {
 				this.m[this.i+1] = Math.floor(this.v[x]/10)%10;
 				this.m[this.i+2] = this.v[x]%10;
 				break;
-			case 0x3A: this.buzzPitch(this.pitch = this.v[x]); break;
+			case 0x3A: this.buzzPitch(this.v[x]); break;
+			case 0x3B: this.buzzVolume(this.v[x]); break;
+			case 0x3C: this.buzzSelect(x&15); break;
+			case 0x3D: this.buzzChannel(x&3); break;
 			case 0x55:
 				for(var z = 0; z <= x; z++) { this.m[this.i+z] = this.v[z]; }
 				if (!this.loadStoreQuirks) { this.i = (this.i+x+1)&0xFFFF; }
@@ -619,7 +623,7 @@ function Emulator() {
 			this.opcode();
 		}
 		catch(err) {
-			console.log("halted: " + err);
+ 			console.log("halted: " + err);
 			this.halted = true;
 		}
 	}
