@@ -343,7 +343,8 @@ function AudioControl(){
 	}
 	
 	this.voices = [new Voice(),new Voice(),new Voice(),new Voice()];
-	this.select = [this.voices[0]];
+	this.voice = this.voices[0];
+	var emptyVoice = new Voice();
 
 	this.refresh = _ => {
 		playPattern(_,[0]);
@@ -360,34 +361,19 @@ function AudioControl(){
 		while(audioData.length > 8) audioData.shift();
 	}
 	this.setTimer = (timer) => {
-		for (var i = 0; i < this.select.length; i++){
-			if(timer == 0) this.select[i].reset = true;
-			this.select[i].timer = timer;
-		}
+		if(timer == 0) this.voice.reset = true;
+		this.voice.timer = timer;
 	}
-	this.setBuffer = buffer => {
-		for (var i = 0; i < this.select.length; i++){
-			this.select[i].buffer = buffer;
-		}
-	}
-	this.setPitch = pitch => {
-		for (var i = 0; i < this.select.length; i++)
-			this.select[i].pitch = pitch;
-	}
-	this.setVolume = volume => {
-		for (var i = 0; i < this.select.length; i++)
-			this.select[i].volume = volume/255;
-	}
+	this.setBuffer = buffer => this.voice.buffer = buffer;
+	this.setPitch = pitch => this.voice.pitch = pitch;
+	this.setVolume = volume => this.voice.volume = volume/255;
 	this.setChannel = mask => {
-		for (var i = 0; i < this.select.length; i++){
-			this.select[i].left=(mask&1)!=0;
-			this.select[i].right=(mask&2)!=0;
-		}
+		this.voice.left=(mask&1)!=0;
+		this.voice.right=(mask&2)!=0;
 	}
 	this.setSelect = select => {
-		this.select = []
-		for (var i = 0; i < 4; i++, select >>= 1)
-			if(select&1) this.select.push(this.voices[i])
+		if(select>3) this.voice= emptyVoice;
+		else this.voice=this.voices[select];
 	}
 	
 }

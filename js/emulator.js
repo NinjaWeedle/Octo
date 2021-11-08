@@ -365,8 +365,8 @@ function Emulator() {
 				break;
 			case 0x3A: this.buzzPitch(this.v[x]); break;
 			case 0x3B: this.buzzVolume(this.v[x]); break;
-			case 0x3C: this.buzzSelect(x&15); break;
-			case 0x3D: this.buzzChannel(x&3); break;
+			case 0x3C: this.buzzSelect(x); break;
+			case 0x3D: this.buzzChannel(x); break;
 			case 0x55:
 				for(var z = 0; z <= x; z++) { this.m[this.i+z] = this.v[z]; }
 				if (!this.loadStoreQuirks) { this.i = (this.i+x+1)&0xFFFF; }
