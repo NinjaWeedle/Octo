@@ -211,7 +211,6 @@ function Emulator() {
 	this.backgroundColor    = "#996600";
 	this.buzzColor          = "#FFAA00";
 	this.quietColor         = "#000000";
-	this.palettes           = [];
 	this.shiftQuirks        = false;
 	this.loadStoreQuirks    = false;
 	this.clipQuirks         = false;
@@ -225,9 +224,41 @@ function Emulator() {
 	this.maskFormatOverride = true;
 	this.numericFormatStr   = "default";
 	this.fontStyle          = 'octo';
+	this.defaultPalette     = [
+		this.backgroundColor,
+		this.fillColor,
+		this.fillColor2,
+		this.blendColor,
+		"#000","#000","#000","#000",
+		"#000","#000","#000","#000",
+		"#000","#000","#000","#000",
+	]
+	this.palette            = [this.defaultPalette];
+	
+	Object.defineProperty(this, "backgroundColor", {
+		get : function() { return this.defaultPalette[0] },
+		set : function(d) { return this.defaultPalette[0] = d }
+	});
+	Object.defineProperty(this, "fillColor", {
+		get : function() { return this.defaultPalette[1] },
+		set : function(d) { return this.defaultPalette[1] = d }
+	});
+	Object.defineProperty(this, "fillColor2", {
+		get : function() { return this.defaultPalette[2] },
+		set : function(d) { return this.defaultPalette[2] = d }
+	});
+	Object.defineProperty(this, "blendColor", {
+		get : function() { return this.defaultPalette[3] },
+		set : function(d) { return this.defaultPalette[3] = d }
+	});
 
 	// interpreter state
-	this.p  = [[],[],[],[]];  // pixels
+	this.p  = [ // pixels, as preinitialized array
+		new Uint8Array(128*64),
+		new Uint8Array(128*64),
+		new Uint8Array(128*64),
+		new Uint8Array(128*64)
+	];
 	this.m  = [];       // memory (bytes)
 	this.r  = [];       // return stack
 	this.v  = [];       // registers
@@ -265,17 +296,7 @@ function Emulator() {
 		// initialise memory with a new array to ensure that it is of the right size and is initiliased to 0
 		this.m = this.enableXO ? new Uint8Array(0x10000) : new Uint8Array(0x1000);
 
-		this.p = [[],[],[],[]];
-
-		this.palettes = [
-			this.backgroundColor,
-			this.fillColor,
-			this.fillColor2,
-			this.blendColor,
-			"#000","#000","#000","#000",
-			"#000","#000","#000","#000",
-			"#000","#000","#000","#000",
-		]
+		this.palette = [...this.defaultPalette];
 
 		// initialize memory
 		var font = fontsets[this.fontStyle];
@@ -359,7 +380,7 @@ function Emulator() {
 				var G = this.m[this.i+1];
 				var B = this.m[this.i+2];
 				var RGB = R*65536+G*256+B;
-				this.palettes[x] = "#"+RGB.toString(16).padStart(6,0);
+				this.palette[x] = "#"+RGB.toString(16).padStart(6,0);
 				break;
 			case 0x07: this.v[x] = this.dt; break;
 			case 0x0A: this.waiting = true; this.waitReg = x; break;
@@ -414,7 +435,7 @@ function Emulator() {
 					var data = this.m[i++]<<8
 					if(!len) data |= this.m[i++]
 					if(this.clipQuirks)
-						if(b>=rowSize) break;
+						if(b>=rowSize) continue;
 					var a = x % colSize;
 					b %= rowSize;
 					while(data){
@@ -461,32 +482,29 @@ function Emulator() {
 			this.pc = this.r.pop();
 			return;
 		}
-		if ((nnn & 0xFFF0) == 0x00C0) {
-			// scroll down n pixels
+		if ((nnn & 0xFFF0) == 0x00C0) { // scroll down n pixels
 			var n = nnn & 0x00F;
 			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var z = this.p[layer].length - 1; z >= 0; z--) {
 					this.p[layer][z] = (z >= rowSize * n) ? this.p[layer][z - (rowSize * n)] : 0;
 				}
 			}
 			return;
 		}
-		if ((nnn & 0xFFF0) == 0x00D0) {
-			// scroll up n pixels
+		if ((nnn & 0xFFF0) == 0x00D0) { // scroll up n pixels
 			var n = nnn & 0x00F;
 			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var z = 0; z < this.p[layer].length; z++) {
 					this.p[layer][z] = (z < (this.p[layer].length - rowSize * n)) ? this.p[layer][z + (rowSize * n)] : 0;
 				}
 			}
 			return;
 		}
-		if (nnn == 0x00F0) {
-			// invert
+		if (nnn == 0x00F0) { // invert 
 			for(var layer = 0; layer < 4; layer++) {
 				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var z = 0; z < this.p[layer].length; z++)
@@ -497,11 +515,11 @@ function Emulator() {
 		if (nnn == 0x00F1) { this.drawop = (x,y)=>x|y; return; } //  OR draw mode
 		if (nnn == 0x00F2) { this.drawop = (x,y)=>x&y; return; } // AND draw mode
 		if (nnn == 0x00F3) { this.drawop = (x,y)=>x^y; return; } // XOR draw mode
-		if (nnn == 0x00FB) {
-			// scroll right 4 pixels
+
+		if (nnn == 0x00FB) { // scroll right 4 pixels
 			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var a = 0; a < this.p[layer].length; a += rowSize) {
 					for(var b = rowSize-1; b >= 0; b--) {
 						this.p[layer][a + b] = (b > 3) ? this.p[layer][a + b - 4] : 0;
@@ -510,11 +528,10 @@ function Emulator() {
 			}
 			return;
 		}
-		if (nnn == 0x00FC) {
-			// scroll left 4 pixels
+		if (nnn == 0x00FC) { // scroll left 4 pixels
 			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var a = 0; a < this.p[layer].length; a += rowSize) {
 					for(var b = 0; b < rowSize; b++) {
 						this.p[layer][a + b] = (b < rowSize - 4) ? this.p[layer][a + b + 4] : 0;
@@ -523,24 +540,23 @@ function Emulator() {
 			}
 			return;
 		}
-		if (nnn == 0x00FD) {
-			// exit
+		if (nnn == 0x00FD) { // exit
 			this.halted = true;
 			this.exitVector();
 			return;
 		}
-		if (nnn == 0x00FE) {
-			// lores
+		if (nnn == 0x00FE) { // lores
 			this.hires = false;
-			this.p = [[], [], [], []];
-			for(var z = 0, p = this.p; z < 32*64;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
+			var lastPlane = this.plane;
+			this.plane = 7; this.machine(0x00E0);
+			this.plane = lastPlane;
 			return;
 		}
-		if (nnn == 0x00FF) {
-			// hires
+		if (nnn == 0x00FF) { // hires
 			this.hires = true;
-			this.p = [[], [], [], []];
-			for(var z = 0, p = this.p; z < 64*128;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
+			var lastPlane = this.plane;
+			this.plane = 7; this.machine(0x00E0);
+			this.plane = lastPlane;
 			return;
 		}
 		if (nnn == 0x000) { this.halted = true; return; }

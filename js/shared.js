@@ -9,7 +9,8 @@
 //must be set > 0
 var scaleFactor = 5;
 //dom id for canvas element
-var renderTarget = "target";
+var renderTarget = document.createElement("canvas");
+renderTarget.width = 128;  renderTarget.height = 64;
 
 const optionFlags = [
 	"tickrate",
@@ -41,109 +42,73 @@ function packOptions(emulator) {
 	return r
 }
 
-function setRenderTarget(scale, canvas) {
+function setRenderTarget(scale, div) {
+	var c = document.getElementById(div);
+	if(c.children.length==0) c.appendChild(renderTarget)
+
+	var rot= emulator.screenRotation.toString()+"deg"
+	
+	renderTarget.style.transform = "scale("+scale+","+scale+") rotate("+rot+")"
+	renderTarget.style.transformOrigin = "center center"
+	renderTarget.style.imageRendering = "pixelated"
+	
 	scaleFactor = scale;
-	renderTarget = canvas;
-	var c = document.getElementById(canvas);
-
-	// Remove any existing previous delta frame so first frame is always drawn:
-	c.last = undefined;
-
-	var w  = scaleFactor * 128;
-	var h  = scaleFactor *  64;
-
-	if (emulator.screenRotation == 90 || emulator.screenRotation == 270) {
-		c.width  = h;
-		c.height = w;
-	}
-	else {
-		c.width  = w;
-		c.height = h;
-	}
-}
-
-function setTransform(emulator, g) {
-	g.setTransform(1, 0, 0, 1, 0, 0);
-	var x = scaleFactor * 128;
-	var y = scaleFactor *  64;
-	switch(emulator.screenRotation) {
-		case 90:
-			g.rotate(0.5 * Math.PI);
-			g.translate(0, -y);
-			break;
-		case 180:
-			g.rotate(1.0 * Math.PI);
-			g.translate(-x, -y);
-			break;
-		case 270:
-			g.rotate(1.5 * Math.PI);
-			g.translate(-x, 0);
-			break;
-		default:
-			console.assert(emulator.screenRotation === 0, 'Screen rotation not set to 0, 90, 180, or 270. Treating as 0.')
-	}
-}
-
-
-function arrayEqual(a, b) {
-	var length = a.length;
-	if (length !== b.length) { return false; }
-	for (var i = 0; i < length; i++) {
-		if (a[i] !== b[i]) { return false; }
-	}
-	return true;
 }
 
 function getColor(id) {
-	return emulator.palettes[id];
-	switch(id) {
+	switch(id){
 		case 0: return emulator.backgroundColor;
 		case 1: return emulator.fillColor;
 		case 2: return emulator.fillColor2;
 		case 3: return emulator.blendColor;
+		default: return "#000";
 	}
-	throw "invalid color: " + id;
 }
-
-function renderDisplay(emulator) {
-	var c = document.getElementById(renderTarget);
-
-	// Canvas rendering can be expensive. Exit out early if nothing has changed.
-	var colors = [...emulator.palettes];
-	if (c.last !== undefined ) {
-		if (arrayEqual(c.last.p[0], emulator.p[0]) && arrayEqual(c.last.p[1], emulator.p[1])
-				&& arrayEqual(c.last.colors, colors)) {
-			return;
-		}
-		if (c.last.hires !== emulator.hires)
-			c.last = undefined;  // full redraw when switching resolution
+function renderDisplay(emulator){
+	var r = renderTarget;
+	var g = r.getContext("2d");
+	if (r.canvas == undefined){
+		r.canvas = g.createImageData(128,64);
 	}
-	var g = c.getContext("2d");
-	setTransform(emulator, g);
-	var w      = emulator.hires ? 128         : 64;
-	var h      = emulator.hires ? 64          : 32;
-	var size   = emulator.hires ? scaleFactor : scaleFactor*2;
-	var lastPixels = c.last !== undefined? c.last.p: [[], []];
+	var w = emulator.hires ? 128 : 64;
+	var h = emulator.hires ? 64  : 32;
+	var s = emulator.hires ? 1   : 2 ;
 
-	g.scale(size, size)
-	var z = 0, p = emulator.p;
-	for(var y = 0; y < h; ++y) {
-		for(var x = 0; x < w; ++x, ++z) {
-			var oldColorIdx = lastPixels[0][z] + (lastPixels[1][z] << 1);
-			var colorIdx = p[0][z] + p[1][z]*2 + p[2][z]*4 + p[3][z]*8;
-			//if (oldColorIdx !== colorIdx) {
-				g.fillStyle = getColor(colorIdx);
-				g.fillRect(x, y, 1, 1);
-			//}
+	var p = emulator.p;
+
+	var c = []
+	for(var i = 0; i < 16; i++){
+		g.fillStyle = emulator.palette[i];
+		let C = parseInt(g.fillStyle.slice(1),16);
+		let R = 255 & C >> 16;
+		let G = 255 & C >> 8;
+		let B = 255 & C;
+		let A = 255;
+		c.push([R,G,B,A])
+	}
+	var i = 0
+	var d = r.canvas.data;
+	for(var y = 0; y < h; y++){
+		for(var j = 0; j < s; j++){
+			for(var x = 0; x < w; x++){
+				var l = x + y*w;
+				var q = c[
+					p[3][l]<<3|
+					p[2][l]<<2|
+					p[1][l]<<1|
+					p[0][l]
+				];
+				for(var k = 0; k < s; k++){
+					d[i++] = q[0];
+					d[i++] = q[1];
+					d[i++] = q[2];
+					d[i++] = q[3];
+				}
+			}
 		}
 	}
-	g.scale(1, 1) //restore scale to 1,1 just in case
 
-	c.last = {
-		colors: colors,
-		p: [emulator.p[0].slice(), emulator.p[1].slice()],
-		hires: emulator.hires,
-	};
+	g.putImageData(r.canvas,0,0);
 }
 
 ////////////////////////////////////
@@ -358,7 +323,7 @@ function AudioControl(){
 			lastBuffer.mix(audioData.pop());
 		}
 		audioData.push(lastBuffer);
-		while(audioData.length > 8) audioData.shift();
+		while(audioData.length > 16) audioData.shift();
 	}
 	this.setTimer = (timer) => {
 		if(timer == 0) this.voice.reset = true;
