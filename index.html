@@ -964,11 +964,14 @@ function compile() {
     if (c.rom.length > maxRom) {
       throw 'Rom is too large- ' + (c.rom.length-maxRom) + ' bytes over!'
     }
+    let extensions =
+      (c.schip ? 'SuperChip' : '') +
+      (c.xo    ? ', XO-Chip'   : '') +
+      (c.exo   ? ', EXO-Chip'   : '')
+
     setStatusMessage(
       (c.rom.length + ' bytes, ' + (maxRom-c.rom.length) + ' free.') +
-      (c.schip ? ' (SuperChip instructions used)' : '') +
-      (c.xo    ? ' (XO-Chip instructions used)'   : ''),
-      true
+      extensions==''?'':"("+extensions+" instructions used)",true
     )
   }
   catch (error) {

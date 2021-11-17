@@ -340,7 +340,6 @@ function AudioControl(){
 		if(select>3) this.voice= emptyVoice;
 		else this.voice=this.voices[select];
 	}
-	
 }
 
 function escapeHtml(str) {

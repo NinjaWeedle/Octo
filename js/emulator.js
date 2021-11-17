@@ -300,7 +300,7 @@ function Emulator() {
 
 		// initialize memory
 		var font = fontsets[this.fontStyle];
-		for(var z = 0, p = this.p; z < 32*64;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
+		for(var z = 0, p = this.p; z <128*64;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
 		for(var z = 0; z < font.small.length;z++) { this.m[z] = font.small[z]; }
 		for(var z = 0; z < font.big.length;  z++) { this.m[z + font.small.length] = font.big[z]; }
 		for(var z = 0; z < rom.rom.length;   z++) { this.m[0x200+z] = rom.rom[z]; }
