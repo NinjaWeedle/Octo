@@ -349,7 +349,8 @@ Compiler.prototype.constantValue = function() {
 }
 
 Compiler.prototype.reservedNames = {
-	":=":true, "|=":true, "&=":true, "^=":true, "-=":true, "=-":true, "+=":true,
+	":=":true, "|=":true, "&=":true, "^=":true,
+	"-=":true, "=-":true, "+=":true, "*=":true, "/=":true, "=/":true, 
 	">>=":true, "<<=":true, "==":true, "!=":true, "<":true, ">":true,
 	"<=":true, ">=":true, "key":true, "-key":true, "hex":true, "bighex":true,
 	"random":true, "delay":true, ":":true, ":next":true, ":unpack":true,
@@ -361,7 +362,9 @@ Compiler.prototype.reservedNames = {
 	"scroll-down":true, "scroll-right":true, "scroll-left":true,
 	"lores":true, "hires":true, "loadflags":true, "saveflags":true, "i":true,
 	"audio":true, "plane":true, "scroll-up":true, ":macro":true, ":calc":true, ":byte":true,
-	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true, "pitch":true,
+	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true,
+	"palette":true, "mode-or":true, "mode-and":true, "mode-xor":true, "invert":true,
+	"pitch":true, "volume":true, "voice":true, "channel":true,
 };
 
 Compiler.prototype.checkName = function(name, kind) {
@@ -582,18 +585,21 @@ Compiler.prototype.vassign = function(reg) {
 		else if (o == "delay")  { this.inst(0xF0 | reg, 0x07); }
 		else                    { this.inst(0x60 | reg, this.shortValue(o)); }
 	}
+	else if ("|="  == token) { this.fourop(0x8, reg, this.register(), 0x1); }
+	else if ("&="  == token) { this.fourop(0x8, reg, this.register(), 0x2); }
+	else if ("^="  == token) { this.fourop(0x8, reg, this.register(), 0x3); }
 	else if ("+=" == token) {
 		if (this.isRegister()) { this.fourop(0x8, reg, this.register(), 0x4); }
 		else                   { this.inst(0x70 | reg, this.shortValue()); }
 	}
-	else if ("|="  == token) { this.fourop(0x8, reg, this.register(), 0x1); }
-	else if ("&="  == token) { this.fourop(0x8, reg, this.register(), 0x2); }
-	else if ("^="  == token) { this.fourop(0x8, reg, this.register(), 0x3); }
 	else if ("-="  == token) {
 		if (this.isRegister()) { this.fourop(0x8, reg, this.register(), 0x5); }
 		else                   { this.inst(0x70 | reg, 0xFF&(1+~this.shortValue())); }
 	}
 	else if ("=-"  == token) { this.fourop(0x8, reg, this.register(), 0x7); }
+	else if ("*="  == token) { this.fourop(0x8, reg, this.register(), 0xC); }
+	else if ("/="  == token) { this.fourop(0x8, reg, this.register(), 0xD); }
+	else if ("=/"  == token) { this.fourop(0x8, reg, this.register(), 0xF); }
 	else if (">>=" == token) { this.fourop(0x8, reg, this.register(), 0x6); }
 	else if ("<<=" == token) { this.fourop(0x8, reg, this.register(), 0xE); }
 	else {
@@ -864,6 +870,7 @@ Compiler.prototype.instruction = function(token) {
 	else if (token == "delay")   { this.expect(":="); this.inst(0xF0 | this.register(), 0x15); }
 	else if (token == "buzzer")  { this.expect(":="); this.inst(0xF0 | this.register(), 0x18); }
 	else if (token == "pitch")   { this.expect(":="); this.inst(0xF0 | this.register(), 0x3A); }
+	else if (token == "volume")  { this.expect(":="); this.inst(0xF0 | this.register(), 0x3A); }
 	else if (token == "if") {
 		var control = this.controlToken();
 		if (control[0] == "then") {
@@ -928,15 +935,38 @@ Compiler.prototype.instruction = function(token) {
 		this.whiles.pop();
 	}
 	else if (token == "plane") {
-		var plane = this.tinyValue();
-		if (plane > 3) throw `The plane bitmask must be [0,3], was ${plane}.`
+		var value = this.tinyValue();
+		if (value > 15) throw `The plane bitmask must be [0,15], was ${value}.`
 		this.xo = true;
-		this.inst(0xF0 | plane, 0x01);
+		this.inst(0xF0 | value, 0x01);
+	}
+	else if (token == "palette") {
+		var value = this.tinyValue();
+		if (value > 15) throw `The palette select must be [0,15], was ${value}.`
+		this.xo = true;
+		this.inst(0xF0 | value, 0x03);
+	}
+	else if (token == "channel") {
+		var value = this.tinyValue();
+		if (value > 3) throw `The channel bitmask must be [0,3], was ${value}.`
+		this.xo = true;
+		this.inst(0xF0 | value, 0x3D);
+	}
+	else if (token == "voice") {
+		var value = this.tinyValue();
+		if (value > 3) throw `The voice select must be [0,3], was ${value}.`
+		this.xo = true;
+		this.inst(0xF0 | value, 0x3C);
 	}
 	else if (token == "audio") {
 		this.xo = true;
 		this.inst(0xF0, 0x02);
 	}
+	else if (token == "invert")   { this.xo = true; this.inst(0x00, 0xF0); }
+	else if (token == "mode-or")  { this.xo = true; this.inst(0x00, 0xF1); }
+	else if (token == "mode-and") { this.xo = true; this.inst(0x00, 0xF2); }
+	else if (token == "mode-xor") { this.xo = true; this.inst(0x00, 0xF3); }
+	else if (token == "scroll-right") { this.schip = true; this.inst(0x00, 0xFB); }
 	else if (token == "scroll-down")  { this.schip = true; this.inst(0x00, 0xC0 | this.tinyValue()); }
 	else if (token == "scroll-up")    { this.xo    = true; this.inst(0x00, 0xD0 | this.tinyValue()); }
 	else if (token == "scroll-right") { this.schip = true; this.inst(0x00, 0xFB); }

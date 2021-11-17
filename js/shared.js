@@ -95,6 +95,7 @@ function arrayEqual(a, b) {
 }
 
 function getColor(id) {
+	return emulator.palettes[id];
 	switch(id) {
 		case 0: return emulator.backgroundColor;
 		case 1: return emulator.fillColor;
@@ -108,8 +109,8 @@ function renderDisplay(emulator) {
 	var c = document.getElementById(renderTarget);
 
 	// Canvas rendering can be expensive. Exit out early if nothing has changed.
-	var colors = [emulator.backgroundColor, emulator.fillColor, emulator.fillColor2, emulator.blendColor];
-	if (c.last !== undefined) {
+	var colors = [...emulator.palettes];
+	if (c.last !== undefined ) {
 		if (arrayEqual(c.last.p[0], emulator.p[0]) && arrayEqual(c.last.p[1], emulator.p[1])
 				&& arrayEqual(c.last.colors, colors)) {
 			return;
@@ -122,18 +123,18 @@ function renderDisplay(emulator) {
 	var w      = emulator.hires ? 128         : 64;
 	var h      = emulator.hires ? 64          : 32;
 	var size   = emulator.hires ? scaleFactor : scaleFactor*2;
-	var lastPixels = c.last !== undefined? c.last.p: [[], []]
+	var lastPixels = c.last !== undefined? c.last.p: [[], []];
 
 	g.scale(size, size)
-	var z = 0;
+	var z = 0, p = emulator.p;
 	for(var y = 0; y < h; ++y) {
 		for(var x = 0; x < w; ++x, ++z) {
 			var oldColorIdx = lastPixels[0][z] + (lastPixels[1][z] << 1);
-			var colorIdx = emulator.p[0][z] + (emulator.p[1][z] << 1);
-			if (oldColorIdx !== colorIdx) {
+			var colorIdx = p[0][z] + p[1][z]*2 + p[2][z]*4 + p[3][z]*8;
+			//if (oldColorIdx !== colorIdx) {
 				g.fillStyle = getColor(colorIdx);
 				g.fillRect(x, y, 1, 1);
-			}
+			//}
 		}
 	}
 	g.scale(1, 1) //restore scale to 1,1 just in case
@@ -297,17 +298,16 @@ function playPattern(soundLength,buffer,pitch=PITCH_BIAS,
 	// keep super-sampling consistent with audio sample rate
 	var quality = Math.ceil( 384000 / audio.sampleRate );
 
-	// compact second-order low-pass filter preset:
-	var dec = 2, rnd = dec * dec;
+	var lowpass = 4 // compact second-order low-pass filter preset.
 	// the current preset is only intended to smooth out supersamples
 	// to decimate, not filtering audible trebles. Though the below code
 	// could be uncommented to demonstrate lowpass filtered output:
-	// var dec = 8, rnd = dec * dec; // Higher dec, stronger lowpass.
+	// var lowpass = 16 // Higher the value, stronger the lowpass.
 	
 	var newSampleState = [];
 	for(var channel = 0; channel < 2; channel++){
 		// retrieve current sample states
-		var pos = sampleState[channel][0]; // sample position
+		var pos = Math.fround(sampleState[channel][0]); // sample position
 		var val = Math.fround(sampleState[channel][1]); // first term
 		var vel = Math.fround(sampleState[channel][2]); // second term
 		var gain = gains[channel];
@@ -316,8 +316,8 @@ function playPattern(soundLength,buffer,pitch=PITCH_BIAS,
 			for (var j = 0; j < quality; ++j) {
 				var cell = pos >> 3, shift = pos & 7 ^ 7;
 				var sample = buffer[cell] >> shift & 1;
-				vel += sample*gain - val - vel / dec;
-				val += vel / rnd / dec;
+				vel += sample*gain - val - vel / lowpass;
+				val += vel / lowpass / lowpass;
 				pos = ( pos + step / quality ) % bufflen;
 			}
 			audioBuffer[channel][i] = val;
