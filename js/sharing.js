@@ -316,7 +316,7 @@ function gifBuilder(width, height, colors) {
 			s(count)       // repeat count (0 is forever)
 			b(0)           // terminator
 		},
-		frame: (pixels,delay) => {
+		frame: (pixels,delay,colors=null) => {
 			s(0xF921)      // graphic control extension
 			b(4)           // payload size
 			b(4)           // do not dispose frame
@@ -329,7 +329,11 @@ function gifBuilder(width, height, colors) {
 			s(0)           // y offset
 			s(width)
 			s(height)
-			b(0)           // no local colortable
+			if(colors){    // with local colortable
+				b(0xA0 | (z-1))
+				for (let x=0; x<1<<z; x++) { const c=colors[x]|0; b(c>>16); b(c>>8); b(c) }
+			}   
+			else b(0)      // no local colortable
 			b(7)           // minimum LZW code size
 			for (let off = 0; off < pixels.length; off += 64) {
 				b(1 + Math.min(64,pixels.length)) // block size
@@ -397,7 +401,7 @@ function gifDecode(bytes) {
 		if (here == 0x3B) break
 		else if (here == 0x2C) {
 			const left = s(), top = s(), iw = s(), ih = s(), ip = b()
-			const lct = (ip & 0x80) ? cl(1 << ((ip & 0x70)+1)) : null
+			const lct = (ip & 0x80) ? cl(1 << ((ip & 0x7)+1)) : null
 			if (ip & 0x40) throw 'interlaced GIFs are not supported.'
 			let pix = unLZW(b(), dl())
 			if (iw != width || ih != height || left!=0 || top!= 0) {
@@ -411,7 +415,7 @@ function gifDecode(bytes) {
 			if (xt in { 0x01:1, 0xF9:1, 0xFE:1, 0xFF:1 }) { dl() } // text, gce, comment, app
 			else { throw 'unrecognized extension type '+xt+'!' }
 		}
-		else { throw 'unrecognized block type '+here+'!' }
+		else { throw 'unrecognized block type '+here+' at '+i }
 	}
 	return { width, height, frames }
 }

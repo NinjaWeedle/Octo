@@ -43,14 +43,26 @@ function packOptions(emulator) {
 }
 
 function setRenderTarget(scale, div) {
+	var r = renderTarget;
+	var g = r.getContext("2d");
 	var c = document.getElementById(div);
-	if(c.children.length==0) c.appendChild(renderTarget)
+	if(c.children.length==0) c.appendChild(r)
 
+	if(r.canvas == undefined){
+		r.canvas = g.createImageData(128,64);
+		r.last = new Uint8Array(128*64); // last pixels
+		r.col = new Uint32Array(16) // last palette
+	}
+
+	for(var i=0;i<128*64;i++) r.last[i]=255 // clear last buffer
+
+	r.eq = false; // is new frame equal to last frame?
+	
 	var rot= emulator.screenRotation.toString()+"deg"
 	
-	renderTarget.style.transform = "scale("+scale+","+scale+") rotate("+rot+")"
-	renderTarget.style.transformOrigin = "center center"
-	renderTarget.style.imageRendering = "pixelated"
+	r.style.transform = "scale("+scale+","+scale+") rotate("+rot+")"
+	r.style.transformOrigin = "center center"
+	r.style.imageRendering = "pixelated"
 	
 	scaleFactor = scale;
 }
@@ -64,19 +76,19 @@ function getColor(id) {
 		default: return "#000";
 	}
 }
+
 function renderDisplay(emulator){
 	var r = renderTarget;
 	var g = r.getContext("2d");
-	if (r.canvas == undefined){
-		r.canvas = g.createImageData(128,64);
-	}
-	var w = emulator.hires ? 128 : 64;
-	var h = emulator.hires ? 64  : 32;
-	var s = emulator.hires ? 1   : 2 ;
+	var w = emulator.hires ? 128 : 64; // hires
+	var h = emulator.hires ? 64  : 32; // lores
+	var s = emulator.hires ? 1   : 2 ; // double pixels
 
-	var p = emulator.p;
+	var p = emulator.p; // new pixels
+	
+	r.eq = true;  // are they equal to previous frame?
 
-	var c = []
+	var c = [] // new colors
 	for(var i = 0; i < 16; i++){
 		g.fillStyle = emulator.palette[i];
 		let C = parseInt(g.fillStyle.slice(1),16);
@@ -85,30 +97,44 @@ function renderDisplay(emulator){
 		let B = 255 & C;
 		let A = 255;
 		c.push([R,G,B,A])
+		if(r.col[i] != C){
+			r.col[i] = C; // not equal,
+			r.eq = false; // because colors changed
+		}
 	}
+
 	var i = 0
+	var n = r.last;
 	var d = r.canvas.data;
 	for(var y = 0; y < h; y++){
 		for(var j = 0; j < s; j++){
 			for(var x = 0; x < w; x++){
 				var l = x + y*w;
-				var q = c[
-					p[3][l]<<3|
-					p[2][l]<<2|
-					p[1][l]<<1|
-					p[0][l]
-				];
-				for(var k = 0; k < s; k++){
-					d[i++] = q[0];
-					d[i++] = q[1];
-					d[i++] = q[2];
-					d[i++] = q[3];
+				var cId = 
+					p[3][l]<<3| // plane 8
+					p[2][l]<<2| // plane 4
+					p[1][l]<<1| // plane 2
+					p[0][l]     // plane 1
+				var q = c[cId];
+				for(var k = 0; k < s; k++, i+=4){
+					if(n[i/4] != cId){
+						n[i/4] = cId; // not equal, 
+						r.eq = false; // because pixels changed
+					}
+					if(!r.eq){
+						d[i  ] = q[0]; // R
+						d[i+1] = q[1]; // G
+						d[i+2] = q[2]; // B
+						d[i+3] = q[3]; // A
+					}
 				}
 			}
 		}
 	}
 
-	g.putImageData(r.canvas,0,0);
+	if(!r.eq){
+		g.putImageData(r.canvas,0,0);
+	}
 }
 
 ////////////////////////////////////

@@ -971,7 +971,7 @@ function compile() {
 
     setStatusMessage(
       (c.rom.length + ' bytes, ' + (maxRom-c.rom.length) + ' free.') +
-      extensions==''?'':"("+extensions+" instructions used)",true
+      (extensions==''?'':" ("+extensions+" instructions used)"),true
     )
   }
   catch (error) {
