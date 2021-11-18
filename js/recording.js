@@ -35,10 +35,10 @@ function recordFrame() {
 runRecord.onclick = _ => {
 	if (currentRecording == null) {
 		runRecord.src = 'images/recording.png'
-		currentRecording = gifBuilder(128, 64, renderTarget.col)
+		currentRecording = gifBuilder(128, 64, targetCanvas.col)
 		currentRecording.comment('made with octo on ' + new Date().toISOString())
 		currentRecording.loop()
-		heldFrame = renderTarget.last;
+		heldFrame = targetCanvas.last;
 		heldTicks = 1
 	}
 	else {

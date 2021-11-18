@@ -298,7 +298,7 @@
     </div>
     <div class='spacer'></div>
     <div id='run-container'>
-      <div id='target'></div>
+      <canvas id='target' width="128" height="64"></canvas>
     </div>
     <div class='spacer'></div>
   </div>
@@ -1029,7 +1029,9 @@ function runRom(rom) {
   var frameTime = 1000/60;
   var timeCount = Date.now() + frameTime / 2;
   var stepFrame = _ => {
-    for(var k = 0; timeCount < Date.now() && k < 4; timeCount += frameTime, k++){
+    var targetTime = Date.now();
+    var frameskipMax = (currentRecording == null)?2:1;
+    for(var k = 0; timeCount < targetTime && k < frameskipMax; timeCount += frameTime, k++){
       for(var z = 0; (z < emulator.tickrate) && (!emulator.waiting); z++) {
         if (!emulator.breakpoint) {
           if (emulator.vBlankQuirks && ((emulator.m[emulator.pc] & 0xF0) == 0xD0)) { z = emulator.tickrate }
@@ -1047,30 +1049,23 @@ function runRom(rom) {
           emulator.buzzTimer(emulator.st=0);
         }
       }
-      recordFrame()
       XOAudio.refresh(frameTime/1000);
     }
-
-    if(timeCount < Date.now()) timeCount = Date.now() // avoid catching up too long
-
+    if(timeCount < targetTime) timeCount = targetTime // avoid catching up too long
+    
+    recordFrame()
     renderDisplay(emulator)
     if (monitoring && !emulator.halted && !emulator.breakpoint) updateMonitor()
     if (emulator.halted) return
     runCover.style.backgroundColor = (emulator.st > 0) ? emulator.buzzColor : emulator.quietColor
   }
-
-  var callFrame = _=>{
-    intervalHandle = window.requestAnimationFrame(callFrame);
-    stepFrame();
-  }
-
-  callFrame()
+  intervalHandle = window.setInterval(stepFrame,frameTime)
 }
 
 function stopRom() {
   emulator.halted = true
   setVisible(runCover, false)
-  window.cancelAnimationFrame(intervalHandle)
+  window.clearInterval(intervalHandle)
   intervalHandle = null
   clearBreakpoint()
   stopAudio()

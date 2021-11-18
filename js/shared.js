@@ -9,8 +9,8 @@
 //must be set > 0
 var scaleFactor = 5;
 //dom id for canvas element
-var renderTarget = document.createElement("canvas");
-renderTarget.width = 128;  renderTarget.height = 64;
+var renderTarget = "target"
+var targetCanvas = null
 
 const optionFlags = [
 	"tickrate",
@@ -42,11 +42,11 @@ function packOptions(emulator) {
 	return r
 }
 
-function setRenderTarget(scale, div) {
-	var r = renderTarget;
+function setRenderTarget(scale, canvas) {
+	renderTarget = canvas;
+	targetCanvas = document.getElementById(canvas);
+	var r = targetCanvas;
 	var g = r.getContext("2d");
-	var c = document.getElementById(div);
-	if(c.children.length==0) c.appendChild(r)
 
 	if(r.canvas == undefined){
 		r.canvas = g.createImageData(128,64);
@@ -68,17 +68,18 @@ function setRenderTarget(scale, div) {
 }
 
 function getColor(id) {
-	switch(id){
-		case 0: return emulator.backgroundColor;
-		case 1: return emulator.fillColor;
-		case 2: return emulator.fillColor2;
-		case 3: return emulator.blendColor;
-		default: return "#000";
+	var color;
+	try{
+		color = emulator.defaultPalette[id];
 	}
+	catch{
+		color = "#000";
+	}
+	return color;
 }
 
 function renderDisplay(emulator){
-	var r = renderTarget;
+	var r = targetCanvas;
 	var g = r.getContext("2d");
 	var w = emulator.hires ? 128 : 64; // hires
 	var h = emulator.hires ? 64  : 32; // lores
