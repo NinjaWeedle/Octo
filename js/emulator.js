@@ -224,7 +224,8 @@ function Emulator() {
 	this.maskFormatOverride = true;
 	this.numericFormatStr   = "default";
 	this.fontStyle          = 'octo';
-	this.defaultPalette     = [
+
+	this.extraColors        = [
 		this.backgroundColor,
 		this.fillColor,
 		this.fillColor2,
@@ -233,24 +234,7 @@ function Emulator() {
 		"#000","#000","#000","#000",
 		"#000","#000","#000","#000",
 	]
-	this.palette            = [this.defaultPalette];
-	
-	Object.defineProperty(this, "backgroundColor", {
-		get : function() { return this.defaultPalette[0] },
-		set : function(d) { return this.defaultPalette[0] = d }
-	});
-	Object.defineProperty(this, "fillColor", {
-		get : function() { return this.defaultPalette[1] },
-		set : function(d) { return this.defaultPalette[1] = d }
-	});
-	Object.defineProperty(this, "fillColor2", {
-		get : function() { return this.defaultPalette[2] },
-		set : function(d) { return this.defaultPalette[2] = d }
-	});
-	Object.defineProperty(this, "blendColor", {
-		get : function() { return this.defaultPalette[3] },
-		set : function(d) { return this.defaultPalette[3] = d }
-	});
+	this.palette            = this.extraColors;
 
 	// interpreter state
 	this.p  = [ // pixels, as preinitialized array
@@ -269,6 +253,7 @@ function Emulator() {
 	this.hires = false; // are we in SuperChip high res mode?
 	this.flags = [];    // semi-persistent hp48 flag vars
 	this.plane = 1;     // graphics plane
+	this.drawop = 3;    // draw operation mode, default 3 (XOR draw)
 	this.profile_data = {};
 
 	// control/debug state
@@ -292,11 +277,32 @@ function Emulator() {
 	this.buzzSelect  = function(select) {}
 	this.buzzChannel = function(channel) {}
 
+	this.setColor = function(id,value){
+		this.extraColors[id] = value;
+		switch(id){
+			case 0: this.backgroundColor = value; break;
+			case 1: this.fillColor       = value; break;
+			case 2: this.fillColor2      = value; break;
+			case 3: this.blendColor      = value; break;
+		}
+	}
+
+	this.getColor = function(id){
+		switch(id){
+			case 0: return this.backgroundColor;
+			case 1: return this.fillColor;
+			case 2: return this.fillColor2;
+			case 3: return this.blendColor;
+		}
+		return this.extraColors[id]
+	}
+
 	this.init = function(rom) {
 		// initialise memory with a new array to ensure that it is of the right size and is initiliased to 0
 		this.m = this.enableXO ? new Uint8Array(0x10000) : new Uint8Array(0x1000);
 
-		this.palette = [...this.defaultPalette];
+		this.palette = []
+		for(var i=0;i<16;i++) this.palette.push(this.getColor(i))
 
 		// initialize memory
 		var font = fontsets[this.fontStyle];
@@ -314,7 +320,7 @@ function Emulator() {
 		this.st = 0;
 		this.hires = false;
 		this.plane = 1;
-		this.drawop = (x,y)=>x^y;
+		this.drawop = 3; 
 
 		// initialize control/debug state
 		this.keys = {};
@@ -369,6 +375,19 @@ function Emulator() {
 	this.misc2 = function(x, rest) {
 		// miscellaneous opcodes 2
 		switch(rest) {
+			case 0x00: //long memory opcodes
+				switch(x){
+					case 0x0:  // long memory reference
+						this.i = ((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					case 0x1:  // long memory jump
+						this.pc = ((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					case 0x2:  // long memory subroutine
+						this.call((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					case 0x3:  // long memory jump0
+						this.jump0((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					default:
+						haltBreakpoint("unknown long opcode "+rest.toString(16).toUpperCase());
+				}
 			case 0x01: this.plane = x; break;
 			case 0x02:
 				var pattern = new Uint8Array(16);
@@ -445,7 +464,11 @@ function Emulator() {
 						var k = colSize*b+a++
 						var pixel = (data<<=1) >> 16 & 1;
 						collision |= pixel & p[k];
-						p[k] = this.drawop(pixel,p[k]);
+						switch(this.drawop){
+							case 1: p[k] = pixel|p[k]; break;
+							case 2: p[k] =~pixel&p[k]; break;
+							case 3: p[k] = pixel^p[k]; break;
+						}
 					}
 				}
 			}
@@ -512,9 +535,9 @@ function Emulator() {
 			}
 			return;
 		}
-		if (nnn == 0x00F1) { this.drawop = (x,y)=>x|y; return; } //  OR draw mode
-		if (nnn == 0x00F2) { this.drawop = (x,y)=>x&y; return; } // AND draw mode
-		if (nnn == 0x00F3) { this.drawop = (x,y)=>x^y; return; } // XOR draw mode
+		if (nnn == 0x00F1) { this.drawop = 1; return; } //  OR draw mode
+		if (nnn == 0x00F2) { this.drawop = 2; return; } // AND draw mode
+		if (nnn == 0x00F3) { this.drawop = 3; return; } // XOR draw mode
 
 		if (nnn == 0x00FB) { // scroll right 4 pixels
 			var rowSize = this.hires ? 128 : 64;
@@ -565,7 +588,7 @@ function Emulator() {
 
 	this.skip = function() {
 		var op = (this.m[this.pc  ] << 8) | this.m[this.pc+1];
-		this.pc += (op == 0xF000) ? 4 : 2;
+		this.pc += (op & 0xF0FF == 0xF000) ? 4 : 2;
 	}
 
 	this.opcode = function() {
@@ -583,13 +606,6 @@ function Emulator() {
 		this.pc += 2;
 
 		// execute a simple opcode
-		
-		if (op == 0xF000) {
-			// long memory reference
-			this.i = ((this.m[this.pc] << 8) | (this.m[this.pc+1])) & 0xFFFF;
-			this.pc += 2;
-			return;
-		}
 
 		if (o == 0x5 && n != 0) {
 			if (n == 2) {

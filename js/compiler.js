@@ -364,7 +364,7 @@ Compiler.prototype.reservedNames = {
 	"lores":true, "hires":true, "loadflags":true, "saveflags":true, "i":true,
 	"audio":true, "plane":true, "scroll-up":true, ":macro":true, ":calc":true, ":byte":true,
 	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true,
-	"palette":true, "mode-or":true, "mode-and":true, "mode-xor":true, "invert":true,
+	"palette":true, "blend-stamp":true, "blend-erase":true, "blend-toggle":true, "invert":true,
 	"pitch":true, "volume":true, "voice":true, "channel":true,
 };
 
@@ -964,9 +964,9 @@ Compiler.prototype.instruction = function(token) {
 		this.inst(0xF0, 0x02);
 	}
 	else if (token == "invert")   { this.exo = true; this.inst(0x00, 0xF0); }
-	else if (token == "mode-or")  { this.exo = true; this.inst(0x00, 0xF1); }
-	else if (token == "mode-and") { this.exo = true; this.inst(0x00, 0xF2); }
-	else if (token == "mode-xor") { this.exo = true; this.inst(0x00, 0xF3); }
+	else if (token == "blend-stamp")  { this.exo = true; this.inst(0x00, 0xF1); }
+	else if (token == "blend-erase")  { this.exo = true; this.inst(0x00, 0xF2); }
+	else if (token == "blend-toggle") { this.exo = true; this.inst(0x00, 0xF3); }
 	else if (token == "scroll-right") { this.schip = true; this.inst(0x00, 0xFB); }
 	else if (token == "scroll-down")  { this.schip = true; this.inst(0x00, 0xC0 | this.tinyValue()); }
 	else if (token == "scroll-up")    { this.xo    = true; this.inst(0x00, 0xD0 | this.tinyValue()); }

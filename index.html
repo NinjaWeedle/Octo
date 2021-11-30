@@ -1030,7 +1030,7 @@ function runRom(rom) {
   var timeCount = Date.now() + frameTime / 2;
   var stepFrame = _ => {
     var targetTime = Date.now();
-    var frameskipMax = (currentRecording == null)?2:1;
+    var frameskipMax = (currentRecording == null)?4:1;
     for(var k = 0; timeCount < targetTime && k < frameskipMax; timeCount += frameTime, k++){
       for(var z = 0; (z < emulator.tickrate) && (!emulator.waiting); z++) {
         if (!emulator.breakpoint) {

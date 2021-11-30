@@ -68,14 +68,7 @@ function setRenderTarget(scale, canvas) {
 }
 
 function getColor(id) {
-	var color;
-	try{
-		color = emulator.defaultPalette[id];
-	}
-	catch{
-		color = "#000";
-	}
-	return color;
+	return emulator.getColor(id);
 }
 
 function renderDisplay(emulator){
@@ -343,7 +336,7 @@ function AudioControl(){
 		let lastBuffer = audioData.pop();
 		for (var i = 0 ; i < this.voices.length; i++) {
 			var voice = this.voices[i];
-			if (voice.reset) voice.sample.pos = 0; voice.reset = false;
+			if (voice.reset) { voice.sample[0][0] = voice.sample[1][0] = 0; } voice.reset = false;
 			var chGain = voice.timer?[voice.volume*voice.left,voice.volume*voice.right]:[0,0];
 			voice.sample = playPattern(_,voice.buffer,voice.pitch,voice.sample,chGain);
 			if(!(voice.timer -= voice.timer > 0)) voice.reset = true;
