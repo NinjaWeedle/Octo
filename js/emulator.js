@@ -213,7 +213,6 @@ function Emulator() {
 	this.quietColor         = "#000000";
 	this.shiftQuirks        = false;
 	this.loadStoreQuirks    = false;
-	this.vfOrderQuirks      = false;
 	this.clipQuirks         = false;
 	this.jumpQuirks         = false;
 	this.logicQuirks        = false;
@@ -226,8 +225,24 @@ function Emulator() {
 	this.numericFormatStr   = "default";
 	this.fontStyle          = 'octo';
 
+	this.extraColors        = [
+		this.backgroundColor,
+		this.fillColor,
+		this.fillColor2,
+		this.blendColor,
+		"#000","#000","#000","#000",
+		"#000","#000","#000","#000",
+		"#000","#000","#000","#000",
+	]
+	this.palette            = this.extraColors;
+
 	// interpreter state
-	this.p  = [[],[]];  // pixels
+	this.p  = [ // pixels, as preinitialized array
+		new Uint8Array(128*64),
+		new Uint8Array(128*64),
+		new Uint8Array(128*64),
+		new Uint8Array(128*64)
+	];
 	this.m  = [];       // memory (bytes)
 	this.r  = [];       // return stack
 	this.v  = [];       // registers
@@ -235,11 +250,10 @@ function Emulator() {
 	this.i  = 0;        // index register
 	this.dt = 0;        // delay timer
 	this.st = 0;        // sound timer
-	this.pitch   = 64;  // audio pitch register
-	this.pattern = [];  // audio pattern buffer
 	this.hires = false; // are we in SuperChip high res mode?
 	this.flags = [];    // semi-persistent hp48 flag vars
 	this.plane = 1;     // graphics plane
+	this.drawop = 3;    // draw operation mode, default 3 (XOR draw)
 	this.profile_data = {};
 
 	// control/debug state
@@ -259,25 +273,44 @@ function Emulator() {
 	this.buzzTimer   = function(timer) {}
 	this.buzzBuffer  = function(buffer) {}
 	this.buzzPitch   = function(pitch) {}
+	this.buzzVolume  = function(volume) {}
+	this.buzzSelect  = function(select) {}
+	this.buzzChannel = function(channel) {}
+
+	this.setColor = function(id,value){
+		this.extraColors[id] = value;
+		switch(id){
+			case 0: this.backgroundColor = value; break;
+			case 1: this.fillColor       = value; break;
+			case 2: this.fillColor2      = value; break;
+			case 3: this.blendColor      = value; break;
+		}
+	}
+
+	this.getColor = function(id){
+		switch(id){
+			case 0: return this.backgroundColor;
+			case 1: return this.fillColor;
+			case 2: return this.fillColor2;
+			case 3: return this.blendColor;
+		}
+		return this.extraColors[id]
+	}
 
 	this.init = function(rom) {
 		// initialise memory with a new array to ensure that it is of the right size and is initiliased to 0
 		this.m = this.enableXO ? new Uint8Array(0x10000) : new Uint8Array(0x1000);
 
-		this.p = [[], []];
-		if (this.enableXO)
-			for(var z = 0; z < 64*128; z++) { this.p[0][z] = 0; this.p[1][z] = 0; }
-		else
-			for(var z = 0; z < 32*64; z++) { this.p[0][z] = 0; this.p[1][z] = 0; }
+		this.palette = []
+		for(var i=0;i<16;i++) this.palette.push(this.getColor(i))
 
 		// initialize memory
 		var font = fontsets[this.fontStyle];
-		for(var z = 0; z < 32*64;            z++) { this.p[0][z] = 0; this.p[1][z] = 0; }
+		for(var z = 0, p = this.p; z <128*64;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
 		for(var z = 0; z < font.small.length;z++) { this.m[z] = font.small[z]; }
 		for(var z = 0; z < font.big.length;  z++) { this.m[z + font.small.length] = font.big[z]; }
 		for(var z = 0; z < rom.rom.length;   z++) { this.m[0x200+z] = rom.rom[z]; }
 		for(var z = 0; z < 16;               z++) { this.v[z] = 0; }
-		for(var z = 0; z < 16;               z++) { this.pattern[z] = 0; }
 
 		// initialize interpreter state
 		this.r = [];
@@ -285,9 +318,9 @@ function Emulator() {
 		this.i  = 0;
 		this.dt = 0;
 		this.st = 0;
-		this.pitch = 64;
 		this.hires = false;
 		this.plane = 1;
+		this.drawop = 3; 
 
 		// initialize control/debug state
 		this.keys = {};
@@ -301,55 +334,73 @@ function Emulator() {
 		this.profile_data = {};
 	}
 
-	this.writeCarry = function(dest, value, flag) {
-		this.v[dest] = (value & 0xFF);
-		this.v[0xF] = flag ? 1 : 0;
-		if (this.vfOrderQuirks) {
-			this.v[dest] = (value & 0xFF);
-		}
-	}
-
 	this.math = function(x, y, op) {
 		// basic arithmetic opcodes
+		var v = this.v,t;
 		switch(op) {
-			case 0x0: this.v[x]  = this.v[y]; break;
-			case 0x1: this.v[x] |= this.v[y]; if (this.logicQuirks) this.v[0xF]=0; break;
-			case 0x2: this.v[x] &= this.v[y]; if (this.logicQuirks) this.v[0xF]=0; break;
-			case 0x3: this.v[x] ^= this.v[y]; if (this.logicQuirks) this.v[0xF]=0; break;
-			case 0x4:
-				var t = this.v[x]+this.v[y];
-				this.writeCarry(x, t, (t > 0xFF));
+			case 0x0: v[x]  = v[y]; break;
+			case 0x1: v[x] |= v[y]; if (this.logicQuirks) v[0xF]=0; break;
+			case 0x2: v[x] &= v[y]; if (this.logicQuirks) v[0xF]=0; break;
+			case 0x3: v[x] ^= v[y]; if (this.logicQuirks) v[0xF]=0; break;
+			case 0x4: v[x] = ( t = v[x]+v[y] ) & 0xFF; v[0xF]=(t> 0xFF)+0; break;
+			case 0x5: v[x] = ( t = v[x]-v[y] ) & 0xFF; v[0xF]=(t>=0x00)+0; break;
+			case 0x6: if (this.shiftQuirks) { y = x; }
+					  v[x] = ( t = v[y] ) >> 1 & 0xFF; v[0xF]=(t& 0x01)+0; break;
+			case 0x7: v[x] = ( t = v[y]-v[x] ) & 0xFF; v[0xF]=(t>=0x00)+0; break;
+			case 0xC: v[x] = ( t = v[x]*v[y] ) & 0xFF; v[0xF]=(t>>   8)+0; break;
+			case 0xD: v[x] = ( t = v[x] )/v[y] & 0xFF; v[0xF]=(t% v[y])+0; break;
 				break;
-			case 0x5:
-				var t = this.v[x]-this.v[y];
-				this.writeCarry(x, t, (this.v[x] >= this.v[y]));
-				break;
-			case 0x7:
-				var t = this.v[y]-this.v[x];
-				this.writeCarry(x, t, (this.v[y] >= this.v[x]));
-				break;
-			case 0x6:
-				if (this.shiftQuirks) { y = x; }
-				var t = this.v[y] >> 1;
-				this.writeCarry(x, t, (this.v[y] & 0x1));
-				break;
-			case 0xE:
-				if (this.shiftQuirks) { y = x; }
-				var t = this.v[y] << 1;
-				this.writeCarry(x, t, ((this.v[y] >> 7) & 0x1));
-				break;
+			case 0xE: if (this.shiftQuirks) { y = x; }
+					  v[x] = ( t = v[y] ) << 1 & 0xFF; v[0xF]=(t>>   7)+0; break;
+			case 0xF: v[x] = v[y]/( t = v[x] ) & 0xFF; v[0xF]=(v[y]% t)+0; break;
 			default:
 				haltBreakpoint("unknown math opcode "+op.toString(16).toUpperCase());
 		}
 	}
 
-	this.misc = function(x, rest) {
-		// miscellaneous opcodes
+	this.misc1 = function(x, rest) {
+		// miscellaneous opcodes 1
 		switch(rest) {
-			case 0x01: this.plane = (x & 0x3); break;
+			case 0x9E:
+				if (Object.keys(keymap[this.v[x]]||{}).some(x => x in this.keys)) { this.skip(); }
+				break;
+			case 0xA1:
+				if (!Object.keys(keymap[this.v[x]]||{}).some(x => x in this.keys)) { this.skip(); }
+				break;
+			default:
+				haltBreakpoint("unknown misc 1 opcode "+rest.toString(16).toUpperCase());
+		}
+	}
+
+	this.misc2 = function(x, rest) {
+		// miscellaneous opcodes 2
+		switch(rest) {
+			case 0x00: //long memory opcodes
+				switch(x){
+					case 0x0:  // long memory reference
+						this.i = ((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					case 0x1:  // long memory jump
+						this.pc = ((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					case 0x2:  // long memory subroutine
+						this.call((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					case 0x3:  // long memory jump0
+						this.jump0((this.m[this.pc++] << 8) | (this.m[this.pc++]));  return;
+					default:
+						haltBreakpoint("unknown long opcode "+rest.toString(16).toUpperCase());
+				}
+			case 0x01: this.plane = x; break;
 			case 0x02:
-				for(var z = 0; z < 16; z++) this.pattern[z] = this.m[this.i+z];
-				this.buzzBuffer(this.pattern); break;
+				var pattern = new Uint8Array(16);
+				for(var z = 0; z < 16; z++)
+					pattern[z] = this.m[this.i+z];
+				this.buzzBuffer(pattern); break;
+			case 0x03:
+				var R = this.m[this.i  ];
+				var G = this.m[this.i+1];
+				var B = this.m[this.i+2];
+				var RGB = R*65536+G*256+B;
+				this.palette[x] = "#"+RGB.toString(16).padStart(6,0);
+				break;
 			case 0x07: this.v[x] = this.dt; break;
 			case 0x0A: this.waiting = true; this.waitReg = x; break;
 			case 0x15: this.dt = this.v[x]; break;
@@ -362,7 +413,10 @@ function Emulator() {
 				this.m[this.i+1] = Math.floor(this.v[x]/10)%10;
 				this.m[this.i+2] = this.v[x]%10;
 				break;
-			case 0x3A: this.buzzPitch(this.pitch = this.v[x]); break;
+			case 0x3A: this.buzzPitch(this.v[x]); break;
+			case 0x3B: this.buzzVolume(this.v[x]); break;
+			case 0x3C: this.buzzSelect(x); break;
+			case 0x3D: this.buzzChannel(x); break;
 			case 0x55:
 				for(var z = 0; z <= x; z++) { this.m[this.i+z] = this.v[z]; }
 				if (!this.loadStoreQuirks) { this.i = (this.i+x+1)&0xFFFF; }
@@ -383,50 +437,43 @@ function Emulator() {
 				for(var z = 0; z <= x; z++) { this.v[z] = 0xFF & this.flags[z]; }
 				break;
 			default:
-				haltBreakpoint("unknown misc opcode "+rest.toString(16).toUpperCase());
+				haltBreakpoint("unknown misc 2 opcode "+rest.toString(16).toUpperCase());
 		}
 	}
 
 	this.sprite = function sprite(x, y, len) {
-		this.v[0xF] = 0x0;
-		var rowSize = this.hires ? 128 : 64;
-		var colSize = this.hires ?  64 : 32;
+		var colSize = this.hires ? 128 : 64;
+		var rowSize = this.hires ?  64 : 32;
+		var collision = 0;
 		var i = this.i;
-		for(var layer = 0; layer < 2; layer++) {
-			if ((this.plane & (layer+1)) == 0) { continue; }
-			if (len == 0) {
-				// draw a SuperChip 16x16 sprite
-				for(var a = 0; a < 16; a++) {
-					for(var b = 0; b < 16; b++) {
-						var target = ((x+b) % rowSize) + ((y+a) % colSize)*rowSize;
-						var source = ((this.m[i+(a*2)+(b > 7 ? 1:0)] >> (7-(b%8))) & 0x1) != 0;
-						if (this.clipQuirks) {
-							if ((x%rowSize)+b>=rowSize || (y%colSize)+a>=colSize) { source = 0; }
+		for(var layer=0;layer<4;layer++){
+			if(this.plane&(1<<layer)){
+				var p = this.p[layer];
+				var b = y % rowSize;
+				for(var h=len?len:16,j=0;j<h;j++,b++){
+					var data = this.m[i++]<<8
+					if(!len) data |= this.m[i++]
+					if(this.clipQuirks)
+						if(b>=rowSize) continue;
+					var a = x % colSize;
+					b %= rowSize;
+					while(data){
+						if(this.clipQuirks)
+							if(a>=colSize) break;
+						a %= colSize;
+						var k = colSize*b+a++
+						var pixel = (data<<=1) >> 16 & 1;
+						collision |= pixel & p[k];
+						switch(this.drawop){
+							case 1: p[k] = pixel|p[k]; break;
+							case 2: p[k] =~pixel&p[k]; break;
+							case 3: p[k] = pixel^p[k]; break;
 						}
-						if (!source) { continue; }
-						if (this.p[layer][target]) { this.p[layer][target] = 0; this.v[0xF] = 0x1; }
-						else { this.p[layer][target] = 1; }
 					}
 				}
-				i += 32;
-			}
-			else {
-				// draw a Chip8 8xN sprite
-				for(var a = 0; a < len; a++) {
-					for(var b = 0; b < 8; b++) {
-						var target = ((x+b) % rowSize) + ((y+a) % colSize)*rowSize;
-						var source = ((this.m[i+a] >> (7-b)) & 0x1) != 0;
-						if (this.clipQuirks) {
-							if ((x%rowSize)+b>=rowSize || (y%colSize)+a>=colSize) { source = 0; }
-						}
-						if (!source) { continue; }
-						if (this.p[layer][target]) { this.p[layer][target] = 0; this.v[0xF] = 0x1; }
-						else { this.p[layer][target] = 1; }
-					}
-				}
-				i += len;
 			}
 		}
+		this.v[0xF] = collision;
 	}
 
 	this.call = function(nnn) {
@@ -443,13 +490,105 @@ function Emulator() {
 	}
 
 	this.machine = function(nnn) {
+		if (nnn == 0x00E0) {
+			// clear
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
+				for(var z = 0; z < this.p[layer].length; z++) {
+					this.p[layer][z] = 0;
+				}
+			}
+			return;
+		}
+		if (nnn == 0x00EE) {
+			// return
+			this.pc = this.r.pop();
+			return;
+		}
+		if ((nnn & 0xFFF0) == 0x00C0) { // scroll down n pixels
+			var n = nnn & 0x00F;
+			var rowSize = this.hires ? 128 : 64;
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
+				for(var z = this.p[layer].length - 1; z >= 0; z--) {
+					this.p[layer][z] = (z >= rowSize * n) ? this.p[layer][z - (rowSize * n)] : 0;
+				}
+			}
+			return;
+		}
+		if ((nnn & 0xFFF0) == 0x00D0) { // scroll up n pixels
+			var n = nnn & 0x00F;
+			var rowSize = this.hires ? 128 : 64;
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
+				for(var z = 0; z < this.p[layer].length; z++) {
+					this.p[layer][z] = (z < (this.p[layer].length - rowSize * n)) ? this.p[layer][z + (rowSize * n)] : 0;
+				}
+			}
+			return;
+		}
+		if (nnn == 0x00F0) { // invert 
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
+				for(var z = 0; z < this.p[layer].length; z++)
+					this.p[layer][z] ^= 1;
+			}
+			return;
+		}
+		if (nnn == 0x00F1) { this.drawop = 1; return; } //  OR draw mode
+		if (nnn == 0x00F2) { this.drawop = 2; return; } // AND draw mode
+		if (nnn == 0x00F3) { this.drawop = 3; return; } // XOR draw mode
+
+		if (nnn == 0x00FB) { // scroll right 4 pixels
+			var rowSize = this.hires ? 128 : 64;
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
+				for(var a = 0; a < this.p[layer].length; a += rowSize) {
+					for(var b = rowSize-1; b >= 0; b--) {
+						this.p[layer][a + b] = (b > 3) ? this.p[layer][a + b - 4] : 0;
+					}
+				}
+			}
+			return;
+		}
+		if (nnn == 0x00FC) { // scroll left 4 pixels
+			var rowSize = this.hires ? 128 : 64;
+			for(var layer = 0; layer < 4; layer++) {
+				if ((this.plane & (1 << layer)) == 0) { continue; }
+				for(var a = 0; a < this.p[layer].length; a += rowSize) {
+					for(var b = 0; b < rowSize; b++) {
+						this.p[layer][a + b] = (b < rowSize - 4) ? this.p[layer][a + b + 4] : 0;
+					}
+				}
+			}
+			return;
+		}
+		if (nnn == 0x00FD) { // exit
+			this.halted = true;
+			this.exitVector();
+			return;
+		}
+		if (nnn == 0x00FE) { // lores
+			this.hires = false;
+			var lastPlane = this.plane;
+			this.plane = 7; this.machine(0x00E0);
+			this.plane = lastPlane;
+			return;
+		}
+		if (nnn == 0x00FF) { // hires
+			this.hires = true;
+			var lastPlane = this.plane;
+			this.plane = 7; this.machine(0x00E0);
+			this.plane = lastPlane;
+			return;
+		}
 		if (nnn == 0x000) { this.halted = true; return; }
-		haltBreakpoint("machine code is not supported.");
+		haltBreakpoint("machine code "+nnn.toString(16).toUpperCase().padStart(4,0)+" is not supported.");
 	}
 
 	this.skip = function() {
 		var op = (this.m[this.pc  ] << 8) | this.m[this.pc+1];
-		this.pc += (op == 0xF000) ? 4 : 2;
+		this.pc += (op & 0xF0FF == 0xF000) ? 4 : 2;
 	}
 
 	this.opcode = function() {
@@ -467,111 +606,12 @@ function Emulator() {
 		this.pc += 2;
 
 		// execute a simple opcode
-		if (op == 0x00E0) {
-			// clear
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
-				for(var z = 0; z < this.p[layer].length; z++) {
-					this.p[layer][z] = 0;
-				}
-			}
-			return;
-		}
-		if (op == 0x00EE) {
-			// return
-			this.pc = this.r.pop();
-			return;
-		}
-		if ((op & 0xF0FF) == 0xE09E) {
-			// if -key
-			if (Object.keys(keymap[this.v[x]]||{}).some(x => x in this.keys)) { this.skip(); }
-			return;
-		}
-		if ((op & 0xF0FF) == 0xE0A1) {
-			// if key
-			if (!Object.keys(keymap[this.v[x]]||{}).some(x => x in this.keys)) { this.skip(); }
-			return;
-		}
-		if ((op & 0xFFF0) == 0x00C0) {
-			// scroll down n pixels
-			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
-				for(var z = this.p[layer].length - 1; z >= 0; z--) {
-					this.p[layer][z] = (z >= rowSize * n) ? this.p[layer][z - (rowSize * n)] : 0;
-				}
-			}
-			return;
-		}
-		if ((op & 0xFFF0) == 0x00D0) {
-			// scroll up n pixels
-			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
-				for(var z = 0; z < this.p[layer].length; z++) {
-					this.p[layer][z] = (z < (this.p[layer].length - rowSize * n)) ? this.p[layer][z + (rowSize * n)] : 0;
-				}
-			}
-			return;
-		}
-		if (op == 0x00FB) {
-			// scroll right 4 pixels
-			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
-				for(var a = 0; a < this.p[layer].length; a += rowSize) {
-					for(var b = rowSize-1; b >= 0; b--) {
-						this.p[layer][a + b] = (b > 3) ? this.p[layer][a + b - 4] : 0;
-					}
-				}
-			}
-			return;
-		}
-		if (op == 0x00FC) {
-			// scroll left 4 pixels
-			var rowSize = this.hires ? 128 : 64;
-			for(var layer = 0; layer < 2; layer++) {
-				if ((this.plane & (layer+1)) == 0) { continue; }
-				for(var a = 0; a < this.p[layer].length; a += rowSize) {
-					for(var b = 0; b < rowSize; b++) {
-						this.p[layer][a + b] = (b < rowSize - 4) ? this.p[layer][a + b + 4] : 0;
-					}
-				}
-			}
-			return;
-		}
-		if (op == 0x00FD) {
-			// exit
-			this.halted = true;
-			this.exitVector();
-			return;
-		}
-		if (op == 0x00FE) {
-			// lores
-			this.hires = false;
-			this.p = [[], []];
-			for(var z = 0; z < 32*64; z++) { this.p[0][z] = 0; this.p[1][z] = 0; }
-			return;
-		}
-		if (op == 0x00FF) {
-			// hires
-			this.hires = true;
-			this.p = [[], []];
-			for(var z = 0; z < 64*128; z++) { this.p[0][z] = 0; this.p[1][z] = 0; }
-			return;
-		}
-		if (op == 0xF000) {
-			// long memory reference
-			this.i = ((this.m[this.pc] << 8) | (this.m[this.pc+1])) & 0xFFFF;
-			this.pc += 2;
-			return;
-		}
 
 		if (o == 0x5 && n != 0) {
 			if (n == 1) {
-				// 5XY1, CHIP8E If VX > VY skip
-				if (this.v[x] > this.v[y]) { this.skip(); }  break;
-			}
+			if (this.v[x] >= this.v[y]) { this.skip(); }
+				return;
+			}		
 			else if (n == 2) {
 				// save range
 				var dist = Math.abs(x - y);
@@ -610,7 +650,8 @@ function Emulator() {
 			case 0xB: this.jump0(nnn);                              break;
 			case 0xC: this.v[x] = (Math.random()*256)&nn;           break;
 			case 0xD: this.sprite(this.v[x], this.v[y], n);         break;
-			case 0xF: this.misc(x, nn);                             break;
+			case 0xE: this.misc1(x, nn);                            break;
+			case 0xF: this.misc2(x, nn);                            break;
 			default: haltBreakpoint("unknown opcode "+o.toString(16).toUpperCase());
 		}
 	}
@@ -622,7 +663,7 @@ function Emulator() {
 			this.opcode();
 		}
 		catch(err) {
-			console.log("halted: " + err);
+ 			console.log("halted: " + err);
 			this.halted = true;
 		}
 	}
