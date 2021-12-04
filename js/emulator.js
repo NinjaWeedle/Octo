@@ -608,7 +608,11 @@ function Emulator() {
 		// execute a simple opcode
 
 		if (o == 0x5 && n != 0) {
-			if (n == 2) {
+			if (n == 1) {
+			if (this.v[x] >= this.v[y]) { this.skip(); }
+				return;
+			}		
+			else if (n == 2) {
 				// save range
 				var dist = Math.abs(x - y);
 				if (x < y) { for(var z = 0; z <= dist; z++) { this.m[this.i+z] = this.v[x+z]; }}
