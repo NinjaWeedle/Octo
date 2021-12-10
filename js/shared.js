@@ -265,18 +265,38 @@ function stopAudio() {
 var VOLUME = 0.25;
 
 function playPattern(soundLength,buffer,pitch=PITCH_BIAS,
-	sampleState=[[0,0,0],[0,0,0]],gains=[1,1]) {
+	mode=0,sampleState=[[0,0,0],[0,0,0]],gains=[1,1]) {
 	if (!audio) { return; }
 	audioEnable()
-
+	
 	var freq = FREQ*2**((pitch-PITCH_BIAS)/48);
 	var samples = Math.ceil(audio.sampleRate * soundLength);
-	
-	if(buffer.length==0) buffer = [0]
-	var bufflen = buffer.length * 8;
+
+	if(buffer.length==0) buffer = [0];
 	var audioBuffer = [
 		new Float32Array(samples),
 		new Float32Array(samples)];
+
+	//  Each sample will be always normalized to byte range, suppose:
+	//  mode 0: 1-bit sample 0bA normalized to 0bAAAAAAAA
+	//  mode 1: 2-bit sample 0bAB normalized to 0bABABABAB
+	//  mode 2: 4-bit sample 0bABCD normalized to 0bABCDABCD
+	//  mode 3: 8-bit sample 0bABCDEFGH simply skips this process
+	
+	var bitDepth = 1 << mode;
+	var samplesPerByte = 8 >> mode;
+	var bitMasker = ( ( 1 << bitDepth ) - 1 ) << 8;
+	var sampleLen = buffer.length * samplesPerByte;
+	var sampleData = new Uint8Array(sampleLen);
+	for(var i = 0, j = 0; j < sampleLen; i = ++i % buffer.length){
+		for(var a = 0, cell = buffer[i]; a < samplesPerByte; a++){
+			var sampleValue = ( ( cell << bitDepth ) & bitMasker ) >> 8; 
+			for(var shifts = bitDepth; shifts < 8; shifts <<= 1)
+				sampleValue = sampleValue << shifts | sampleValue
+			sampleData[j++] = sampleValue;
+			cell = cell << bitDepth & 255;
+		}
+	}
 
 	var step = freq / audio.sampleRate;
 
@@ -299,11 +319,10 @@ function playPattern(soundLength,buffer,pitch=PITCH_BIAS,
 		
 		for(var i = 0, il = samples; i < il; i++) {
 			for (var j = 0; j < quality; ++j) {
-				var cell = pos >> 3, shift = pos & 7 ^ 7;
-				var sample = buffer[cell] >> shift & 1;
+				var sample = sampleData[parseInt(pos)] / 255;
 				vel += sample*gain - val - vel / lowpass;
 				val += vel / lowpass / lowpass;
-				pos = ( pos + step / quality ) % bufflen;
+				pos = ( pos + step / quality ) % sampleLen;
 			}
 			audioBuffer[channel][i] = val;
 		}
@@ -325,6 +344,7 @@ function AudioControl(){
 		this.volume = 1;
 		this.left = true;
 		this.right = true;
+		this.mode = 0;
 	}
 	
 	this.voices = [new Voice(),new Voice(),new Voice(),new Voice()];
@@ -336,20 +356,42 @@ function AudioControl(){
 		let lastBuffer = audioData.pop();
 		for (var i = 0 ; i < this.voices.length; i++) {
 			var voice = this.voices[i];
-			if (voice.reset) { voice.sample[0][0] = voice.sample[1][0] = 0; } voice.reset = false;
-			var chGain = voice.timer?[voice.volume*voice.left,voice.volume*voice.right]:[0,0];
-			voice.sample = playPattern(_,voice.buffer,voice.pitch,voice.sample,chGain);
-			if(!(voice.timer -= voice.timer > 0)) voice.reset = true;
+			if (voice.reset) { 
+				voice.sample[0][0] = 0;
+				voice.sample[1][0] = 0; 
+			} 
+			voice.reset = false;
+
+			var chGain = !voice.timer?[0,0]:[
+				voice.volume*voice.left,
+				voice.volume*voice.right,
+			];
+
+			voice.sample = playPattern(_,
+				voice.buffer,voice.pitch,
+				voice.mode,voice.sample,
+				chGain);
+
+			if(voice.timer)
+				voice.timer--;
+			else
+				voice.reset = true;
+
 			lastBuffer.mix(audioData.pop());
 		}
 		audioData.push(lastBuffer);
-		while(audioData.length > 16) audioData.shift();
+
+		while(audioData.length > 16)
+			audioData.shift();
 	}
 	this.setTimer = (timer) => {
 		if(timer == 0) this.voice.reset = true;
 		this.voice.timer = timer;
 	}
-	this.setBuffer = buffer => this.voice.buffer = buffer;
+	this.setBuffer = buffer =>{
+		this.voice.buffer = buffer[0];
+		this.voice.mode = buffer[1];
+	};
 	this.setPitch = pitch => this.voice.pitch = pitch;
 	this.setVolume = volume => this.voice.volume = volume/255;
 	this.setChannel = mask => {

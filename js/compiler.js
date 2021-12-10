@@ -198,6 +198,7 @@ var unaryFunc = {
 	'sqrt' : function(x) { return Math.sqrt(x);  },
 	'sign' : function(x) { return Math.sign(x);  },
 	'ceil' : function(x) { return Math.ceil(x);  },
+	'round': function(x) { return Math.round(x); },
 	'floor': function(x) { return Math.floor(x); },
 	'@'    : function(x,m) { return m[(0|x)-0x200]||0; },
 };
@@ -206,7 +207,8 @@ var binaryFunc = {
 	'+'    : function(x,y) { return x+y; },
 	'*'    : function(x,y) { return x*y; },
 	'/'    : function(x,y) { return x/y; },
-	'%'    : function(x,y) { return x%y; },
+	'%'    : function(x,y) { return (y+x%y)%y; },
+	'**'   : function(x,y) { return x**y; },
 	'&'    : function(x,y) { return x&y; },
 	'|'    : function(x,y) { return x|y; },
 	'^'    : function(x,y) { return x^y; },
@@ -257,7 +259,7 @@ function Compiler(source) {
 	this.hasmain = true;
 	this.schip = false;
 	this.xo = false;
-	this.exo = false;
+	this.ex = false;
 	this.breakpoints = {}; // map<address, name>
 	this.monitors = {}; // map<name, {type, base, length}>
 	this.hereaddr = 0x200;
@@ -266,6 +268,10 @@ function Compiler(source) {
 	this.currentToken = 0
 	this.source = source;
 	this.tokens = null;
+
+	this.addressbias = 0;
+	this.longbranch = false;
+	this.shortcomp = false;
 }
 
 Compiler.prototype.data = function(a) {
@@ -298,7 +304,8 @@ Compiler.prototype.fourop = function(op, x, y, n) {
 
 }
 Compiler.prototype.jump = function(addr, dest) {
-	this.rom[addr - 0x200] = (0x10 | ((dest >> 8) & 0xF));
+	if(dest < 0) throw `Negative address '${dest}'!`;
+	this.rom[addr - 0x200] |= (dest >> 8);
 	this.rom[addr - 0x1FF] = (dest & 0xFF);
 }
 
@@ -364,8 +371,9 @@ Compiler.prototype.reservedNames = {
 	"lores":true, "hires":true, "loadflags":true, "saveflags":true, "i":true,
 	"audio":true, "plane":true, "scroll-up":true, ":macro":true, ":calc":true, ":byte":true,
 	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true,
-	"palette":true, "blend-stamp":true, "blend-erase":true, "blend-toggle":true, "invert":true,
-	"pitch":true, "volume":true, "voice":true, "channel":true,
+	"sprite-grab":true, "sprite-stamp":true, "sprite-erase":true, "sprite-toggle":true,
+	"palette":true, "invert":true,"pitch":true, "volume":true, "voice":true, "channel":true,
+	":shortcomp":true,":longbranch":true,":longcomp":true,":shortbranch":true,":offset":true,
 };
 
 Compiler.prototype.checkName = function(name, kind) {
@@ -515,28 +523,68 @@ Compiler.prototype.conditional = function(negated) {
 		this.inst(0xE0 | reg, 0x9E);
 	}
 	else if (token == ">") {
-		if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
-		else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
-		this.fourop(0x8, compTemp, reg, 0x5); // vf -= v1
-		this.inst(0x4F, 0);                   // if vf != 0 then ...
+		if(!this.shortcomp){
+			if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
+			else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
+			this.fourop(0x8, compTemp, reg, 0x5); // vf -= v1
+			this.inst(0x4F, 0);                   // if vf == 0 then ...
+		}else{
+			if (this.isRegister()) { 
+				this.fourop(0x5, this.register(), reg, 0x1); 
+			}
+			else{
+				this.inst  (0x60 | compTemp, this.shortValue());
+				this.fourop(0x5, compTemp, reg, 0x1); 
+			}
+		}
 	}
 	else if (token == "<") {
-		if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
-		else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
-		this.fourop(0x8, compTemp, reg, 0x7); // vf =- v1
-		this.inst(0x4F, 0);                   // if vf != 0 then ...
+		if(!this.shortcomp){
+			if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
+			else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
+			this.fourop(0x8, compTemp, reg, 0x7); // vf =- v1
+			this.inst(0x4F, 0);                   // if vf == 0 then ...
+		}else{
+			if (this.isRegister()) { 
+				this.fourop(0x5, reg, this.register(), 0x1); 
+			}
+			else{
+				this.inst  (0x60 | compTemp, this.shortValue());
+				this.fourop(0x5, reg, compTemp, 0x1); 
+			}
+		}
 	}
 	else if (token == ">=") {
-		if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
-		else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
-		this.fourop(0x8, compTemp, reg, 0x7); // vf =- v1
-		this.inst(0x3F, 0);                   // if vf == 0 then ...
+		if(!this.shortcomp){
+			if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
+			else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
+			this.fourop(0x8, compTemp, reg, 0x7); // vf =- v1
+			this.inst(0x3F, 0);                   // if vf != 0 then ...
+		}else{
+			if (this.isRegister()) { 
+				this.fourop(0x9, reg, this.register(), 0x1); 
+			}
+			else{
+				this.inst  (0x60 | compTemp, this.shortValue());
+				this.fourop(0x9, reg, compTemp, 0x1); 
+			}
+		}
 	}
 	else if (token == "<=") {
-		if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
-		else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
-		this.fourop(0x8, compTemp, reg, 0x5); // vf -= v1
-		this.inst(0x3F, 0);                   // if vf == 0 then ...
+		if(!this.shortcomp){
+			if (this.isRegister()) { this.fourop(0x8, compTemp, this.register(), 0x0); }
+			else                   { this.inst  (0x60 | compTemp, this.shortValue()); }
+			this.fourop(0x8, compTemp, reg, 0x5); // vf -= v1
+			this.inst(0x3F, 0);                   // if vf != 0 then ...
+		}else{
+			if (this.isRegister()) { 
+				this.fourop(0x9, this.register(), reg, 0x1); 
+			}
+			else{
+				this.inst  (0x60 | compTemp, this.shortValue());
+				this.fourop(0x9, compTemp, reg, 0x1); 
+			}
+		}
 	}
 	else {
 		throw `Expected conditional operator, got ${typeof token=='string'?`'${token}'`:token}.`;
@@ -598,9 +646,9 @@ Compiler.prototype.vassign = function(reg) {
 		else                   { this.inst(0x70 | reg, 0xFF&(1+~this.shortValue())); }
 	}
 	else if ("=-"  == token) { this.fourop(0x8, reg, this.register(), 0x7); }
-	else if ("*="  == token) { this.fourop(0x8, reg, this.register(), 0xC); this.exo = true;}
-	else if ("/="  == token) { this.fourop(0x8, reg, this.register(), 0xD); this.exo = true;}
-	else if ("=/"  == token) { this.fourop(0x8, reg, this.register(), 0xF); this.exo = true;}
+	else if ("*="  == token) { this.fourop(0x8, reg, this.register(), 0xC); this.ex = true;}
+	else if ("/="  == token) { this.fourop(0x8, reg, this.register(), 0xD); this.ex = true;}
+	else if ("=/"  == token) { this.fourop(0x8, reg, this.register(), 0xF); this.ex = true;}
 	else if (">>=" == token) { this.fourop(0x8, reg, this.register(), 0x6); }
 	else if ("<<=" == token) { this.fourop(0x8, reg, this.register(), 0xE); }
 	else {
@@ -711,8 +759,15 @@ Compiler.prototype.macroBody = function(name, desc) {
 }
 
 Compiler.prototype.instruction = function(token) {
-	if (token == ":") { this.resolveLabel(0); }
-	else if (token == ":next") { this.resolveLabel(1); }
+	if (token == ":") { this.resolveLabel(-this.addressbias); }
+	else if (token == ":next") {
+		if (this.peek()=="long"){
+			this.next();
+			this.resolveLabel(2-this.addressbias);
+		}
+		else
+			this.resolveLabel(1-this.addressbias);
+	}
 	else if (token == ":unpack") {
 		if (this.peek()=="long") {
 			this.next();
@@ -842,9 +897,19 @@ Compiler.prototype.instruction = function(token) {
 		var value = this.parseCalculated(message ? 'assert '+message : 'assert');
 		if (!value) { throw message ? "Assertion failed: "+message : "Assertion failed."; }
 	}
+	else if (token == ":shortbranch") { this.longbranch = false; }
+	else if (token == ":longbranch") { this.longbranch = true; }
+	else if (token == ":longcomp") { this.shortcomp = false; }
+	else if (token == ":shortcomp") { this.shortcomp = true; }
+	else if (token == ":offset") { this.addressbias = this.constantValue(); }
 	else if (token == ";")       { this.inst(0x00, 0xEE); }
 	else if (token == "return")  { this.inst(0x00, 0xEE); }
 	else if (token == "clear")   { this.inst(0x00, 0xE0); }
+	else if (token == "invert")  { this.inst(0x00, 0xE1); this.ex = true; }
+	else if (token == "sprite-grab")   { this.inst(0x00, 0xF0); this.ex = true; }
+	else if (token == "sprite-stamp")  { this.inst(0x00, 0xF1); this.ex = true; }
+	else if (token == "sprite-erase")  { this.inst(0x00, 0xF2); this.ex = true; }
+	else if (token == "sprite-toggle") { this.inst(0x00, 0xF3); this.ex = true; }
 	else if (token == "bcd")     { this.inst(0xF0 | this.register(), 0x33); }
 	else if (token == "save")    {
 		var reg = this.register();
@@ -868,10 +933,21 @@ Compiler.prototype.instruction = function(token) {
 			this.inst(0xF0 | reg, 0x65);
 		}
 	}
+	else if (token == "read") {
+		var reg = this.register();
+		if (!this.end() && this.peek() == "-") {
+			this.expect("-");
+			this.xo = true;
+			this.inst(0x90 | reg, (this.register() << 4) | 0x03);
+		}
+		else {
+			this.inst(0xF0 | reg, 0x45);
+		}
+	}
 	else if (token == "delay")   { this.expect(":="); this.inst(0xF0 | this.register(), 0x15); }
 	else if (token == "buzzer")  { this.expect(":="); this.inst(0xF0 | this.register(), 0x18); }
 	else if (token == "pitch")   { this.expect(":="); this.inst(0xF0 | this.register(), 0x3A); this.xo = true;}
-	else if (token == "volume")  { this.expect(":="); this.inst(0xF0 | this.register(), 0x3A); this.exo = true;}
+	else if (token == "volume")  { this.expect(":="); this.inst(0xF0 | this.register(), 0x3B); this.ex = true;}
 	else if (token == "if") {
 		var control = this.controlToken();
 		if (control[0] == "then") {
@@ -881,8 +957,10 @@ Compiler.prototype.instruction = function(token) {
 		else if (control[0] == "begin") {
 			this.conditional(true);
 			this.expect("begin");
-			this.branches.push([this.here(), this.pos, "begin"]);
-			this.inst(0x00, 0x00);
+			if(this.longbranch) this.inst(0xF1, 0x00);
+			this.branches.push([this.here()-this.addressbias, this.pos, "begin"]);
+			if(this.longbranch) this.inst(0x00, 0x00);
+			else                this.inst(0x10, 0x00);
 		}
 		else {
 			this.pos = control;
@@ -893,19 +971,39 @@ Compiler.prototype.instruction = function(token) {
 		if (this.branches.length < 1) {
 			throw "This 'else' does not have a matching 'begin'.";
 		}
-		this.jump(this.branches.pop()[0], this.here()+2);
-		this.branches.push([this.here(), this.pos, "else"]);
-		this.inst(0x00, 0x00);
+		if(this.longbranch) this.inst(0xF1, 0x00);
+		this.jump(this.branches.pop()[0], this.here()+2-this.addressbias);
+		this.branches.push([this.here()-this.addressbias, this.pos, "else"]);
+		if(this.longbranch) this.inst(0x00, 0x00);
+		else                this.inst(0x10, 0x00);
 	}
 	else if (token == "end") {
 		if (this.branches.length < 1) {
 			throw "This 'end' does not have a matching 'begin'.";
 		}
-		this.jump(this.branches.pop()[0], this.here());
+		this.jump(this.branches.pop()[0], this.here()-this.addressbias);
 	}
-	else if (token == "jump0")   { this.immediate(0xB0, this.wideValue()); }
-	else if (token == "jump")    { this.immediate(0x10, this.wideValue()); }
-	else if (token == "native")  { this.immediate(0x00, this.wideValue()); }
+	else if (token == "jump0")   { 
+		if(this.peek() == "long"){
+			this.next();
+			this.inst(0xF3,0x00);
+			var addr = this.veryWideValue(false,true);
+			this.inst(addr>>8, addr);
+		}
+		else
+			this.immediate(0xB0, this.wideValue()); 
+	}
+	else if (token == "jump")    {
+		if(this.peek() == "long"){
+			this.next();
+			this.inst(0xF1,0x00);
+			var addr = this.veryWideValue(false,true);
+			this.inst(addr>>8, addr);
+		}
+		else
+			this.immediate(0x10, this.wideValue());
+	}
+	else if (token == "native")  {this.immediate(0x00, this.wideValue()); }
 	else if (token == "sprite")  {
 		var r1 = this.register();
 		var r2 = this.register();
@@ -914,7 +1012,7 @@ Compiler.prototype.instruction = function(token) {
 		this.inst(0xD0 | r1, (r2 << 4) | size);
 	}
 	else if (token == "loop") {
-		this.loops.push([this.here(), this.pos]);
+		this.loops.push([this.here()-this.addressbias, this.pos]);
 		this.whiles.push(null);
 	}
 	else if (token == "while") {
@@ -922,16 +1020,24 @@ Compiler.prototype.instruction = function(token) {
 			throw "This 'while' is not within a loop.";
 		}
 		this.conditional(true);
-		this.whiles.push(this.here());
-		this.immediate(0x10, 0);
+		if(this.longbranch) this.inst(0xF1, 0x00);
+		this.whiles.push(this.here()-this.addressbias);
+		if(this.longbranch) this.inst(0x00, 0x00);
+		else                this.inst(0x10, 0x00);
 	}
 	else if (token == "again") {
 		if (this.loops.length < 1) {
 			throw "This 'again' does not have a matching 'loop'.";
 		}
-		this.immediate(0x10, this.loops.pop()[0]);
+		var addr = this.loops.pop()[0];
+		if(this.longbranch){
+			this.inst(0xF1, 0x00);
+			this.inst(0x00, 0x00);
+		}else
+			this.inst(0x10, 0x00);
+		this.jump(this.here()-2, addr);
 		while (this.whiles[this.whiles.length - 1] != null) {
-			this.jump(this.whiles.pop(), this.here());
+			this.jump(this.whiles.pop(), this.here()-this.addressbias);
 		}
 		this.whiles.pop();
 	}
@@ -944,30 +1050,25 @@ Compiler.prototype.instruction = function(token) {
 	else if (token == "palette") {
 		var value = this.tinyValue();
 		if (value > 15) throw `The palette select must be [0,15], was ${value}.`
-		this.exo = true;
+		this.ex = true;
 		this.inst(0xF0 | value, 0x03);
 	}
 	else if (token == "channel") {
 		var value = this.tinyValue();
 		if (value > 3) throw `The channel bitmask must be [0,3], was ${value}.`
-		this.exo = true;
-		this.inst(0xF0 | value, 0x3D);
+		this.ex = true;
+		this.inst(0xF0 | value, 0x39);
 	}
 	else if (token == "voice") {
 		var value = this.tinyValue();
 		if (value > 3) throw `The voice select must be [0,3], was ${value}.`
-		this.exo = true;
-		this.inst(0xF0 | value, 0x3C);
+		this.ex = true;
+		this.inst(0xF0 | value, 0x38);
 	}
 	else if (token == "audio") {
 		this.xo = true;
 		this.inst(0xF0, 0x02);
 	}
-	else if (token == "invert")   { this.exo = true; this.inst(0x00, 0xF0); }
-	else if (token == "blend-stamp")  { this.exo = true; this.inst(0x00, 0xF1); }
-	else if (token == "blend-erase")  { this.exo = true; this.inst(0x00, 0xF2); }
-	else if (token == "blend-toggle") { this.exo = true; this.inst(0x00, 0xF3); }
-	else if (token == "scroll-right") { this.schip = true; this.inst(0x00, 0xFB); }
 	else if (token == "scroll-down")  { this.schip = true; this.inst(0x00, 0xC0 | this.tinyValue()); }
 	else if (token == "scroll-up")    { this.xo    = true; this.inst(0x00, 0xD0 | this.tinyValue()); }
 	else if (token == "scroll-right") { this.schip = true; this.inst(0x00, 0xFB); }
@@ -992,8 +1093,14 @@ Compiler.prototype.instruction = function(token) {
 		this.vassign(this.register(token));
 	}
 	else if (token == ":call") {
-		var addr = this.peek() == '{' ? this.parseCalculated('ANONYMOUS') : this.wideValue(this.next());
-		this.immediate(0x20, 0xFFF & addr);
+
+			var addr = this.peek() == '{' ? this.parseCalculated('ANONYMOUS') : this.wideValue(this.next());
+			this.immediate(0x20, 0xFFF & addr);
+	}
+	else if (token == "long") {
+		this.inst(0xF2, 0x00);
+		var addr = this.veryWideValue(false,true);
+		this.inst(addr>>8, addr);
 	}
 	else {
 		this.immediate(0x20, this.wideValue(token));
@@ -1005,7 +1112,7 @@ Compiler.prototype.go = function() {
 	this.aliases["unpack-lo"] = 0x1;
 
 	this.tokens = tokenize(this.source,this);
-	this.inst(0, 0); // reserve a jump slot
+	this.inst(0x10, 0); // reserve a jump slot
 	while(!this.end()) {
 		if (typeof this.peek() == "number") {
 			var nn = this.next();

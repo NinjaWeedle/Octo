@@ -390,14 +390,16 @@ function Emulator() {
 				}
 			case 0x01: this.plane = x; break;
 			case 0x02:
-				var pattern = new Uint8Array(16);
-				for(var z = 0; z < 16; z++)
+				var bitdepth = x>>2;
+				var bytesize = 16<<(x&3);
+				var pattern = new Uint8Array(bytesize);
+				for(var z = 0; z < bytesize; z++)
 					pattern[z] = this.m[this.i+z];
-				this.buzzBuffer(pattern); break;
+				this.buzzBuffer([pattern,bitdepth]); break;
 			case 0x03:
-				var R = this.m[this.i  ];
-				var G = this.m[this.i+1];
-				var B = this.m[this.i+2];
+				var R = this.m[this.i++];
+				var G = this.m[this.i++];
+				var B = this.m[this.i++];
 				var RGB = R*65536+G*256+B;
 				this.palette[x] = "#"+RGB.toString(16).padStart(6,0);
 				break;
@@ -413,10 +415,10 @@ function Emulator() {
 				this.m[this.i+1] = Math.floor(this.v[x]/10)%10;
 				this.m[this.i+2] = this.v[x]%10;
 				break;
+			case 0x38: this.buzzSelect(x); break;
+			case 0x39: this.buzzChannel(x); break;
 			case 0x3A: this.buzzPitch(this.v[x]); break;
 			case 0x3B: this.buzzVolume(this.v[x]); break;
-			case 0x3C: this.buzzSelect(x); break;
-			case 0x3D: this.buzzChannel(x); break;
 			case 0x55:
 				for(var z = 0; z <= x; z++) { this.m[this.i+z] = this.v[z]; }
 				if (!this.loadStoreQuirks) { this.i = (this.i+x+1)&0xFFFF; }
@@ -442,34 +444,48 @@ function Emulator() {
 	}
 
 	this.sprite = function sprite(x, y, len) {
-		var colSize = this.hires ? 128 : 64;
-		var rowSize = this.hires ?  64 : 32;
+		var cols = 64 << this.hires;
+		var rows = 32 << this.hires;
+		var index = this.i;
 		var collision = 0;
-		var i = this.i;
-		for(var layer=0;layer<4;layer++){
-			if(this.plane&(1<<layer)){
+		if(!len) len = 16; // 16x16 sprite
+
+		for(var layer = 0; layer < 4; layer++){
+			if(this.plane & 1 << layer){
 				var p = this.p[layer];
-				var b = y % rowSize;
-				for(var h=len?len:16,j=0;j<h;j++,b++){
-					var data = this.m[i++]<<8
-					if(!len) data |= this.m[i++]
-					if(this.clipQuirks)
-						if(b>=rowSize) continue;
-					var a = x % colSize;
-					b %= rowSize;
-					while(data){
+
+				for(var r = 0, data; r < len; r++){
+					if(!this.drawop){ // on sprite-grab
+						data = 0xff00;
+						if(len==16) data |= 0xff;
+					}else{ // on normal sprite-draw
+						data = this.m[index] << 8;
+						if(len==16) data |= this.m[index+1];
+					}
+					var b = y + r;
+					for(var c = 15, d = 0; data; c--){
+						var a = x + ( 15 - c );
 						if(this.clipQuirks)
-							if(a>=colSize) break;
-						a %= colSize;
-						var k = colSize*b+a++
-						var pixel = (data<<=1) >> 16 & 1;
+							if(a >= cols) break;
+							if(b >= rows) break;
+						a %= cols; b %= rows;
+						var k = a + b * cols;
+						var pixel = data >> c & 1;
 						collision |= pixel & p[k];
 						switch(this.drawop){
-							case 1: p[k] = pixel|p[k]; break;
-							case 2: p[k] =~pixel&p[k]; break;
-							case 3: p[k] = pixel^p[k]; break;
+							case 0: d |= p[k] << c; break;
+							case 1: p[k] |=  pixel; break;
+							case 2: p[k] &= ~pixel; break;
+							case 3: p[k] ^=  pixel; break;
 						}
+						data ^= pixel << c;
 					}
+					if(!this.drawop){
+						this.m[index] = d >> 8;
+						if( len == 16 )
+							this.m[index+1] = d & 255;
+					}
+					index += 1 + ( len == 16 );
 				}
 			}
 		}
@@ -588,7 +604,7 @@ function Emulator() {
 
 	this.skip = function() {
 		var op = (this.m[this.pc  ] << 8) | this.m[this.pc+1];
-		this.pc += (op & 0xF0FF == 0xF000) ? 4 : 2;
+		this.pc += ((op & 0xF0FF) == 0xF000) ? 4 : 2;
 	}
 
 	this.opcode = function() {
@@ -609,9 +625,9 @@ function Emulator() {
 
 		if (o == 0x5 && n != 0) {
 			if (n == 1) {
-			if (this.v[x] >= this.v[y]) { this.skip(); }
-				return;
-			}		
+				if (this.v[x] >= this.v[y]) { this.skip(); }
+					return;
+				}		
 			else if (n == 2) {
 				// save range
 				var dist = Math.abs(x - y);
@@ -631,6 +647,11 @@ function Emulator() {
 			}
 		}
 		if (o == 0x9 && n != 0) {
+			if (n == 1) {
+				if (this.v[x] < this.v[y]) { this.skip(); }
+					return;
+				}		
+			else 
 			haltBreakpoint("unknown opcode "+op.toString(16).toUpperCase());
 		}
 
