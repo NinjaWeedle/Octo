@@ -368,7 +368,7 @@ Compiler.prototype.reservedNames = {
 	"begin":true, "else":true, "end":true, "jump":true, "jump0":true,
 	"native":true, "sprite":true, "loop":true, "while":true, "again":true,
 	"scroll-down":true, "scroll-right":true, "scroll-left":true,
-	"lores":true, "hires":true, "loadflags":true, "saveflags":true, "i":true,
+	"lores":true, "hires":true, "xhres":true, "loadflags":true, "saveflags":true, "i":true,
 	"audio":true, "plane":true, "scroll-up":true, ":macro":true, ":calc":true, ":byte":true,
 	":call":true, ":stringmode":true, ":assert":true, ":monitor":true, ":pointer":true,
 	"sprite-grab":true, "sprite-stamp":true, "sprite-erase":true, "sprite-toggle":true,
@@ -1076,6 +1076,7 @@ Compiler.prototype.instruction = function(token) {
 	else if (token == "exit")         { this.schip = true; this.inst(0x00, 0xFD); }
 	else if (token == "lores")        { this.schip = true; this.inst(0x00, 0xFE); }
 	else if (token == "hires")        { this.schip = true; this.inst(0x00, 0xFF); }
+	else if (token == "xhres")        { this.schip = true; this.inst(0x01, 0x00); }
 	else if (token == "saveflags")    {
 		var flags = this.register();
 		this.schip = true; this.xo = flags > 7;

@@ -203,6 +203,8 @@ var fontsets = {
 
 function Emulator() {
 
+	function Pan(){ this.x = 0; this.y = 0; }
+
 	// persistent configuration settings
 	this.tickrate           = 20;
 	this.fillColor          = "#FFCC00";
@@ -237,11 +239,12 @@ function Emulator() {
 	this.palette            = this.extraColors;
 
 	// interpreter state
-	this.p  = [ // pixels, as preinitialized array
-		new Uint8Array(128*64),
-		new Uint8Array(128*64),
-		new Uint8Array(128*64),
-		new Uint8Array(128*64)
+	this.p  = [ // four layer of pixels, as preinitialized array
+		new Uint8Array(256*128), new Uint8Array(256*128),
+		new Uint8Array(256*128), new Uint8Array(256*128)
+	];
+	this.pan = [ // individual layer panning
+		new Pan(), new Pan(), new Pan(), new Pan(),
 	];
 	this.m  = [];       // memory (bytes)
 	this.r  = [];       // return stack
@@ -250,7 +253,8 @@ function Emulator() {
 	this.i  = 0;        // index register
 	this.dt = 0;        // delay timer
 	this.st = 0;        // sound timer
-	this.hires = false; // are we in SuperChip high res mode?
+	this.hires = 0;     // resolution mode
+	this.scale = 0;     // scale mode
 	this.flags = [];    // semi-persistent hp48 flag vars
 	this.plane = 1;     // graphics plane
 	this.drawop = 3;    // draw operation mode, default 3 (XOR draw)
@@ -306,11 +310,12 @@ function Emulator() {
 
 		// initialize memory
 		var font = fontsets[this.fontStyle];
-		for(var z = 0, p = this.p; z <128*64;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
+		for(var z = 0, p = this.p; z<256*128;z++) { p[0][z] = p[1][z] = p[2][z] = p[3][z] = 0; }
 		for(var z = 0; z < font.small.length;z++) { this.m[z] = font.small[z]; }
 		for(var z = 0; z < font.big.length;  z++) { this.m[z + font.small.length] = font.big[z]; }
 		for(var z = 0; z < rom.rom.length;   z++) { this.m[0x200+z] = rom.rom[z]; }
 		for(var z = 0; z < 16;               z++) { this.v[z] = 0; }
+		for(var z = 0; z <  4;               z++) { this.pan[z].x = this.pan[z].y = 0; }
 
 		// initialize interpreter state
 		this.r = [];
@@ -397,9 +402,9 @@ function Emulator() {
 					pattern[z] = this.m[this.i+z];
 				this.buzzBuffer([pattern,bitdepth]); break;
 			case 0x03:
-				var R = this.m[this.i++];
-				var G = this.m[this.i++];
-				var B = this.m[this.i++];
+				var R = this.m[this.i+0];
+				var G = this.m[this.i+1];
+				var B = this.m[this.i+2];
 				var RGB = R*65536+G*256+B;
 				this.palette[x] = "#"+RGB.toString(16).padStart(6,0);
 				break;
@@ -438,6 +443,14 @@ function Emulator() {
 				}
 				for(var z = 0; z <= x; z++) { this.v[z] = 0xFF & this.flags[z]; }
 				break;
+			case 0xD0:
+				for(let layer=0; layer<4; layer++)
+					if(this.plane & 1<<layer) this.pan[layer].x = this.v[x];
+				break;
+			case 0xD1:
+				for(let layer=0; layer<4; layer++)
+					if(this.plane & 1<<layer) this.pan[layer].y = this.v[x];
+				break;
 			default:
 				haltBreakpoint("unknown misc 2 opcode "+rest.toString(16).toUpperCase());
 		}
@@ -449,7 +462,6 @@ function Emulator() {
 		var index = this.i;
 		var collision = 0;
 		if(!len) len = 16; // 16x16 sprite
-
 		for(var layer = 0; layer < 4; layer++){
 			if(this.plane & 1 << layer){
 				var p = this.p[layer];
@@ -462,12 +474,13 @@ function Emulator() {
 						data = this.m[index] << 8;
 						if(len==16) data |= this.m[index+1];
 					}
-					var b = y + r;
+					var b = y % rows + r;
 					for(var c = 15, d = 0; data; c--){
-						var a = x + ( 15 - c );
-						if(this.clipQuirks)
+						var a = x % cols + ( 15 - c );
+						if(this.clipQuirks){
 							if(a >= cols) break;
 							if(b >= rows) break;
+						}
 						a %= cols; b %= rows;
 						var k = a + b * cols;
 						var pixel = data >> c & 1;
@@ -523,7 +536,7 @@ function Emulator() {
 		}
 		if ((nnn & 0xFFF0) == 0x00C0) { // scroll down n pixels
 			var n = nnn & 0x00F;
-			var rowSize = this.hires ? 128 : 64;
+			var rowSize = 64 << this.hires;
 			for(var layer = 0; layer < 4; layer++) {
 				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var z = this.p[layer].length - 1; z >= 0; z--) {
@@ -534,7 +547,7 @@ function Emulator() {
 		}
 		if ((nnn & 0xFFF0) == 0x00D0) { // scroll up n pixels
 			var n = nnn & 0x00F;
-			var rowSize = this.hires ? 128 : 64;
+			var rowSize = 64 << this.hires;
 			for(var layer = 0; layer < 4; layer++) {
 				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var z = 0; z < this.p[layer].length; z++) {
@@ -556,7 +569,7 @@ function Emulator() {
 		if (nnn == 0x00F3) { this.drawop = 3; return; } // XOR draw mode
 
 		if (nnn == 0x00FB) { // scroll right 4 pixels
-			var rowSize = this.hires ? 128 : 64;
+			var rowSize = 64 << this.hires;
 			for(var layer = 0; layer < 4; layer++) {
 				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var a = 0; a < this.p[layer].length; a += rowSize) {
@@ -568,7 +581,7 @@ function Emulator() {
 			return;
 		}
 		if (nnn == 0x00FC) { // scroll left 4 pixels
-			var rowSize = this.hires ? 128 : 64;
+			var rowSize = 64 << this.hires;
 			for(var layer = 0; layer < 4; layer++) {
 				if ((this.plane & (1 << layer)) == 0) { continue; }
 				for(var a = 0; a < this.p[layer].length; a += rowSize) {
@@ -584,21 +597,31 @@ function Emulator() {
 			this.exitVector();
 			return;
 		}
-		if (nnn == 0x00FE) { // lores
-			this.hires = false;
+		if (nnn == 0x00FE) { // lores (64x32 mode)
+			this.hires = 0;
 			var lastPlane = this.plane;
 			this.plane = 7; this.machine(0x00E0);
 			this.plane = lastPlane;
 			return;
 		}
-		if (nnn == 0x00FF) { // hires
-			this.hires = true;
+		if (nnn == 0x00FF) { // hires (128x64 mode)
+			this.hires = 1;
 			var lastPlane = this.plane;
 			this.plane = 7; this.machine(0x00E0);
 			this.plane = lastPlane;
 			return;
 		}
-		if (nnn == 0x000) { this.halted = true; return; }
+		if (nnn == 0x0100) { // xhres (256x128 mode)
+			this.hires = 2;
+			var lastPlane = this.plane;
+			this.plane = 7; this.machine(0x00E0);
+			this.plane = lastPlane;
+			return;
+		}
+		if (nnn == 0x0101) { this.scale = 0; return; } // 1x scale mode
+		if (nnn == 0x0102) { this.scale = 1; return; } // 2x scale mode
+		if (nnn == 0x0103) { this.scale = 2; return; } // 4x scale mode
+		if (nnn == 0x0000) { this.halted = true; return; }
 		haltBreakpoint("machine code "+nnn.toString(16).toUpperCase().padStart(4,0)+" is not supported.");
 	}
 

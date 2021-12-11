@@ -298,7 +298,7 @@
     </div>
     <div class='spacer'></div>
     <div id='run-container'>
-      <canvas id='target' width="128" height="64"></canvas>
+      <canvas id='target' width="256" height="128"></canvas>
     </div>
     <div class='spacer'></div>
   </div>
@@ -1024,7 +1024,7 @@ function runRom(rom) {
   updateMonitor()
   resetLinter()
   runCover.style.backgroundColor = emulator.quietColor
-  setRenderTarget(5, 'target')
+  setRenderTarget(3, 'target')
 
   var frameTime = 1000/60;
   var timeCount = Date.now() + frameTime / 2;

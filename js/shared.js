@@ -7,7 +7,7 @@
 ////////////////////////////////////
 
 //must be set > 0
-var scaleFactor = 5;
+var scaleFactor = 3;
 //dom id for canvas element
 var renderTarget = "target"
 var targetCanvas = null
@@ -49,12 +49,12 @@ function setRenderTarget(scale, canvas) {
 	var g = r.getContext("2d");
 
 	if(r.canvas == undefined){
-		r.canvas = g.createImageData(128,64);
-		r.last = new Uint8Array(128*64); // last pixels
+		r.canvas = g.createImageData(256,128);
+		r.last = new Uint8Array(256*128); // last pixels
 		r.col = new Uint32Array(16) // last palette
 	}
 
-	for(var i=0;i<128*64;i++) r.last[i]=255 // clear last buffer
+	for(var i=0;i<256*128;i++) r.last[i]=255 // clear last buffer
 
 	r.eq = false; // is new frame equal to last frame?
 	
@@ -74,11 +74,13 @@ function getColor(id) {
 function renderDisplay(emulator){
 	var r = targetCanvas;
 	var g = r.getContext("2d");
-	var w = emulator.hires ? 128 : 64; // hires
-	var h = emulator.hires ? 64  : 32; // lores
-	var s = emulator.hires ? 1   : 2 ; // double pixels
+	var w = 64 << emulator.hires; // width resolution
+	var h = 32 << emulator.hires; // height resolution
+	var s =  4 >> emulator.hires; // resolution scaling
+	var z =  1 << emulator.scale; // internal scaling
 
 	var p = emulator.p; // new pixels
+	var pn = emulator.pan;
 	
 	r.eq = true;  // are they equal to previous frame?
 
@@ -100,23 +102,26 @@ function renderDisplay(emulator){
 	var i = 0
 	var n = r.last;
 	var d = r.canvas.data;
-	for(var y = 0; y < h; y++){
-		for(var j = 0; j < s; j++){
-			for(var x = 0; x < w; x++){
-				var l = x + y*w;
+	for(var y = 0; y < h/z; y++){
+		for(var j = 0; j < s*z; j++){
+			for(var x = 0; x < w/z; x++){
+				let la = (x+pn[0].x) % w + ((y+pn[0].y) % h) * w;
+				let lb = (x+pn[1].x) % w + ((y+pn[1].y) % h) * w;
+				let lc = (x+pn[2].x) % w + ((y+pn[2].y) % h) * w;
+				let ld = (x+pn[3].x) % w + ((y+pn[3].y) % h) * w;
 				var cId = 
-					p[3][l]<<3| // plane 8
-					p[2][l]<<2| // plane 4
-					p[1][l]<<1| // plane 2
-					p[0][l]     // plane 1
+					p[0][la]<<0| // plane 1
+					p[1][lb]<<1| // plane 2
+					p[2][lc]<<2| // plane 4
+					p[3][ld]<<3; // plane 8
 				var q = c[cId];
-				for(var k = 0; k < s; k++, i+=4){
+				for(var k = 0; k < s*z; k++, i+=4){
 					if(n[i/4] != cId){
 						n[i/4] = cId; // not equal, 
 						r.eq = false; // because pixels changed
 					}
 					if(!r.eq){
-						d[i  ] = q[0]; // R
+						d[i+0] = q[0]; // R
 						d[i+1] = q[1]; // G
 						d[i+2] = q[2]; // B
 						d[i+3] = q[3]; // A
@@ -290,20 +295,20 @@ function playPattern(soundLength,buffer,pitch=PITCH_BIAS,
 	var sampleData = new Uint8Array(sampleLen);
 	for(var i = 0, j = 0; j < sampleLen; i = ++i % buffer.length){
 		for(var a = 0, cell = buffer[i]; a < samplesPerByte; a++){
-			var sampleValue = ( ( cell << bitDepth ) & bitMasker ) >> 8; 
+			var sampleValue = ( ( cell <<= bitDepth ) & bitMasker ) >> 8; 
 			for(var shifts = bitDepth; shifts < 8; shifts <<= 1)
-				sampleValue = sampleValue << shifts | sampleValue
+				sampleValue |= sampleValue << shifts;
 			sampleData[j++] = sampleValue;
-			cell = cell << bitDepth & 255;
+			cell &= 255;
 		}
 	}
 
 	var step = freq / audio.sampleRate;
 
 	// keep super-sampling consistent with audio sample rate
-	var quality = Math.ceil( 384000 / audio.sampleRate );
+	var quality = Math.ceil( 192000 / audio.sampleRate );
 
-	var lowpass = 4 // compact second-order low-pass filter preset.
+	var lowpass = 2; // compact second-order low-pass filter preset.
 	// the current preset is only intended to smooth out supersamples
 	// to decimate, not filtering audible trebles. Though the below code
 	// could be uncommented to demonstrate lowpass filtered output:
